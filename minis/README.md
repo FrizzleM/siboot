@@ -37,6 +37,11 @@ finished step stays as one line with what came of it, and a warning stays where
 it happened, so scrolling back reads as a log of the run. It ends in a box: what
 to do next, or why it stopped.
 
+Under all of it, dim, is **A project by Frizzle**: from the first screen, under
+every step and question, and still the last line once siboot exits. On a screen
+too short for it and a blank line above it, it makes way for the run's own
+lines. Plain output has it after the version.
+
 Questions are asked in place, and read keys as they're typed: the email in a
 field, the password as dots, the transfer and verification codes in boxes that
 send themselves at the sixth digit, yes or no on `y` or `n` (or the arrows and
@@ -195,6 +200,13 @@ tests, with a fake iPhone, are in
   through `pbcopy`. Not run on an iPhone yet, so `apple-clipboard` hasn't been
   called from siboot: its use follows Open Minis's source
   (`src/ios/NativeOffloads/ClipboardOffload.m`).
+
+- **0.16.1** is 0.16.0 with the credit under the live area
+  ([above](#the-screen)); the steps are unchanged. Tested on macOS and Alpine
+  aarch64 (58 tests), through `examples/screens.rs` in a 46-column terminal (an
+  install, a stop, `--plain`, and 10 and 8 rows, where it makes way), and with
+  the Alpine build's `siboot check` on a 46-column pty; `install.sh` installed
+  it and skipped a current copy. Not run on an iPhone yet.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account at its
 certificate or App ID limit (siboot then asks which certificate to revoke), and

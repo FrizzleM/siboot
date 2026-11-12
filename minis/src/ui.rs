@@ -7,6 +7,10 @@
 //! answer is printed above that area and stays, so the scrollback reads as a
 //! log of the run.
 //!
+//! The live area ends in the credit, dim, from the header on: it's under every
+//! step and prompt, and still the last line when siboot exits. It's the first
+//! thing to go on a screen too short for it.
+//!
 //! The live area is redrawn in place, so it never wraps and never outgrows
 //! the screen: each of its lines is cut to the terminal's width, and the area
 //! to its height. Each step still says what it's doing before the work
@@ -45,6 +49,9 @@ const TEXT_COLUMN: usize = 4 + NAME_WIDTH;
 const BOX_MAX: usize = 60;
 /// Plain output's indent under a `[n/total]` line.
 const INDENT: &str = "      ";
+/// Under the live area for as long as it's there, and after the version in
+/// plain output.
+const CREDIT: &str = "A project by Frizzle";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mode {
@@ -78,6 +85,9 @@ struct Ui {
     /// The live area's rows, and which of them the cursor is on.
     rows: usize,
     cursor_row: usize,
+    /// The last line printed above the live area is blank, so the credit,
+    /// alone in the area, needs no blank line of its own.
+    after_blank: bool,
     frame: usize,
     /// Plain output: the progress line being rewritten with `\r`, if any, and
     /// the last percentage printed for `plain_label`.
@@ -255,7 +265,11 @@ pub fn header(version: &str, tagline: &str) {
     let note = "Keep Minis open until siboot is done: iOS pauses it in the background.";
     if ui.mode != Mode::Live {
         println!();
-        println!("{} {}", ui.style(STRONG, "siboot"), ui.style(DIM, version));
+        println!(
+            "{} {}",
+            ui.style(STRONG, "siboot"),
+            ui.style(DIM, &format!("{version} · {CREDIT}"))
+        );
         println!("{}", ui.style(DIM, tagline));
         println!();
         println!("{}", ui.style(WARN, note));
@@ -1078,6 +1092,7 @@ impl Ui {
             answers: Vec::new(),
             rows: 0,
             cursor_row: 0,
+            after_blank: true,
             frame: 0,
             plain_open: false,
             plain_label: String::new(),
@@ -1098,6 +1113,9 @@ impl Ui {
             }
             flush();
             return;
+        }
+        if let Some(last) = above.last() {
+            self.after_blank = last.is_empty();
         }
         let (cols, rows) = term::size();
         let (lines, cursor) = self.compose(cols, rows);
@@ -1201,6 +1219,15 @@ impl Ui {
             lines = lines.into_iter().skip(start).take(room).collect();
             cursor = cursor.map(|(row, col)| (row - start, col));
         }
+        // The credit, under a blank line, only where both fit: it never takes
+        // a row from the run.
+        let gap = !(lines.is_empty() && self.after_blank);
+        if lines.len() + usize::from(gap) < room {
+            if gap {
+                lines.push(Line::new());
+            }
+            lines.push(Line::new().add(NONE, "  ").add(DIM, CREDIT));
+        }
         (
             lines
                 .iter()
@@ -1282,6 +1309,17 @@ impl Ui {
     fn close(&mut self) {
         if self.mode == Mode::Live {
             self.mode = Mode::Closed;
+            // The live area stays on screen, credit and all: what comes next
+            // (the shell's prompt) starts on a line under it.
+            if self.rows > 0 {
+                let below = self.rows.saturating_sub(self.cursor_row + 1);
+                let down = if below > 0 {
+                    format!("\x1b[{below}B")
+                } else {
+                    String::new()
+                };
+                term::write(&format!("{down}\r\n"));
+            }
             term::restore();
         }
     }
@@ -2149,6 +2187,46 @@ mod tests {
         assert_eq!(width(&pad("Handover", NAME_WIDTH)), NAME_WIDTH);
         // A name as long as the column still gets a space after it.
         assert_eq!(pad("Developers", NAME_WIDTH), "Developers ");
+    }
+
+    #[test]
+    fn the_credit_ends_the_live_area_while_there_is_room() {
+        let credit = format!("  {CREDIT}");
+        let mut ui = Ui::new();
+        ui.plan = vec!["Check", "Pairing", "Connect"];
+        ui.active = Some(0);
+        ui.status = "reaching GitHub".to_string();
+        let (lines, _) = ui.compose(46, 40);
+        assert_eq!(lines.len(), 5, "{lines:#?}");
+        assert_eq!(lines[3], "");
+        assert_eq!(lines[4], credit);
+        // Under a prompt, which keeps its cursor.
+        ui.dialog = Some(Dialog {
+            lines: vec![rail().add(BOLD, pad("Code", NAME_WIDTH))],
+            cursor: Some((0, TEXT_COLUMN)),
+        });
+        let (lines, cursor) = ui.compose(46, 40);
+        assert_eq!(lines.last(), Some(&credit));
+        assert_eq!(cursor, Some((1, TEXT_COLUMN)));
+        ui.dialog = None;
+        // Alone, after the header or a box: their blank line is its own.
+        ui.active = None;
+        assert_eq!(ui.compose(46, 40).0, std::slice::from_ref(&credit));
+        // Alone after a line that isn't blank: one of its own.
+        ui.after_blank = false;
+        assert_eq!(ui.compose(46, 40).0, [String::new(), credit.clone()]);
+        // A screen too short for it keeps the run's lines.
+        ui.active = Some(0);
+        assert_eq!(ui.compose(46, 6).0.last(), Some(&credit));
+        for rows in [3, 4, 5] {
+            let (lines, _) = ui.compose(46, rows);
+            assert!(!lines.contains(&credit), "{rows}: {lines:#?}");
+            assert_eq!(lines.len(), 3.min(rows - 1), "{rows}: {lines:#?}");
+        }
+        // On a narrow one it's cut like any other line (to 20 columns at least).
+        let (lines, _) = ui.compose(20, 40);
+        assert!(lines.iter().all(|l| width(l) <= 20), "{lines:#?}");
+        assert_eq!(lines.last().map(String::as_str), Some("  A project by Friz…"));
     }
 
     #[test]
