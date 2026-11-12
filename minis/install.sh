@@ -14,7 +14,7 @@ set -eu
 BASE="${SIBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/main/minis}"
 # Of bin/siboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run.
-SHA256="7ba9b38f2d8f7f5a47df4922078c63ba5c82b5c413d4e9929ce6f014d66ffc1e"
+SHA256="82b673767ab45b17a3b4828b524e2a221a635d95071e14f911990cd6044edb17"
 
 DIR="$HOME/.siboot/bin"
 BIN="$DIR/siboot"
