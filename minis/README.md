@@ -23,9 +23,34 @@ Settings › General › VPN & Device Management. Free accounts' apps last 7 day
 SideInstaller can renew itself from then on.
 
 [`install.sh`](install.sh) downloads [`bin/siboot-aarch64`](bin) from this
-repository, checks it against the SHA-256 the script carries, keeps it at
-`~/.siboot/bin/siboot` (and `/usr/local/bin/siboot`), and runs it. After that,
-`siboot` on its own runs it again without downloading.
+repository (a progress bar on one line while it does), checks it against the
+SHA-256 the script carries, keeps it at `~/.siboot/bin/siboot` (and
+`/usr/local/bin/siboot`), and runs it. After that, `siboot` on its own runs it
+again without downloading.
+
+## The screen
+
+On Minis's terminal siboot keeps a small live area under what it has printed:
+the steps of the run, the running one with a spinner, what it's doing and for
+how long, and a progress bar for the download, the upload and the install. A
+finished step stays as one line with what came of it, and a warning stays where
+it happened, so scrolling back reads as a log of the run. It ends in a box: what
+to do next, or why it stopped.
+
+Questions are asked in place, and read keys as they're typed: the email in a
+field, the password as dots, the transfer and verification codes in boxes that
+send themselves at the sixth digit, yes or no on `y` or `n` (or the arrows and
+return), and menus picked with the arrows or a digit. At the verification code,
+a letter shows the other ways to get one (a text, a call, the devices, again).
+Esc steps back or stops; Ctrl-C stops.
+
+Every line is cut or wrapped to the terminal's width (an iPhone upright gives
+about 45 columns), and the live area kept shorter than the screen, so it redraws
+in place. With `--plain` or `--verbose`, `TERM=dumb`, `SIBOOT_PLAIN` set, or
+without a terminal on both ends, siboot prints plain lines instead, one per
+event, as before. `cargo run --example screens` plays the screen through a
+made-up run, on a Mac and without an iPhone (`-- stop`, `-- developer-mode` and
+`-- --plain` for the others).
 
 ## The steps
 
@@ -96,12 +121,15 @@ A static non-PIE executable, like the `pair_host` Minis's own packages ship.
 `--target` must be explicit, or the static flags reach the proc macros too.
 
 To publish a new build, copy it to `bin/siboot-aarch64` and put its
-`sha256sum` in `install.sh`'s `SHA256`, in the same commit: the script refuses a
-binary that doesn't match.
+`sha256sum` in `install.sh`'s `SHA256`, and its size in bytes in `SIZE`, in the
+same commit: the script refuses a binary that doesn't match (`SIZE` only draws
+its progress bar).
 
 ## Tests
 
-`cargo test` runs on any host (macOS included): the hand-off from rootshell
+`cargo test` runs on any host (macOS included): the screen's pieces (widths,
+cutting and wrapping, keys as the terminal sends them, code boxes, the progress
+bar, boxes), the hand-off from rootshell
 against a stand-in for siboot-pair's side (the right code, a mistyped one, three
 wrong ones, something that isn't a pairing file, nothing offered), argument
 parsing, `developer-mode` against stand-ins for lockdownd and AMFI (on already,
@@ -135,6 +163,13 @@ tests, with a fake iPhone, are in
   an iPhone yet. SideInstaller's own helper, which sends the same requests, has
   only read the status and shown the switch on an iPhone where Developer Mode
   was already on.
+
+- **0.15.0** is 0.14.0 with the live screen above and `--plain`; what each step
+  does is unchanged. Tested on macOS and Alpine aarch64 (51 tests), and through
+  `examples/screens.rs` in a 46-column terminal: an install with a mistyped
+  transfer code and the menu of other ways to get Apple's code, a stop, Developer
+  Mode's yes or no, and `--plain`; `install.sh`'s bar in Alpine. Not run on an
+  iPhone yet, so not in Minis's own terminal.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account at its
 certificate or App ID limit (siboot then asks which certificate to revoke), and

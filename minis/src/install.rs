@@ -26,7 +26,8 @@ pub struct Entry {
     pub size: u64,
 }
 
-pub async fn install(connection: &mut Connection, app_dir: &Path) -> Result<()> {
+/// Returns what went up, as "51.0 MB, 412 files".
+pub async fn install(connection: &mut Connection, app_dir: &Path) -> Result<String> {
     let bundle_name = app_dir
         .file_name()
         .and_then(|n| n.to_str())
@@ -44,9 +45,10 @@ pub async fn install(connection: &mut Connection, app_dir: &Path) -> Result<()> 
         )
     })?;
     let total: u64 = entries.iter().map(|e| e.size).sum();
-    ui::info(&format!(
-        "uploading {} files ({:.1} MB) …",
-        entries.iter().filter(|e| !e.is_dir).count(),
+    let files = entries.iter().filter(|e| !e.is_dir).count();
+    let size = format!("{:.1} MB, {files} files", total as f64 / 1_048_576.0);
+    ui::status(&format!(
+        "uploading {files} files ({:.1} MB)",
         total as f64 / 1_048_576.0
     ));
 
@@ -65,7 +67,6 @@ pub async fn install(connection: &mut Connection, app_dir: &Path) -> Result<()> 
 
     let started = std::time::Instant::now();
     let mut sent: u64 = 0;
-    let mut shown = u64::MAX;
     for entry in &entries {
         let remote = format!("{remote_root}/{}", entry.relative);
         if entry.is_dir {
@@ -98,21 +99,17 @@ pub async fn install(connection: &mut Connection, app_dir: &Path) -> Result<()> 
             )
         })?;
         sent += entry.size;
-        let percent = (sent * 100).checked_div(total).unwrap_or(100);
-        if percent != shown && percent.is_multiple_of(5) {
-            ui::progress("uploaded", percent);
-            shown = percent;
-        }
+        ui::progress("uploaded", sent, total);
     }
-    if shown != 100 {
-        ui::progress("uploaded", 100);
-    }
+    ui::progress("uploaded", total, total);
+    ui::progress_end();
     ui::detail(&format!(
         "upload took {:.1} s",
         started.elapsed().as_secs_f64()
     ));
 
     // Every file, at its size: an incomplete bundle installs "fine".
+    ui::status("checking every file arrived whole");
     let mut missing = Vec::new();
     for entry in entries.iter().filter(|e| !e.is_dir) {
         let remote = format!("{remote_root}/{}", entry.relative);
@@ -149,23 +146,24 @@ pub async fn install(connection: &mut Connection, app_dir: &Path) -> Result<()> 
     // and rejects the bundle with 0xe8008015.
     let mut options = plist::Dictionary::new();
     options.insert("PackageType".into(), "Developer".into());
-    ui::info("installing …");
+    ui::status("installing");
     let installed = proxy
         .install_with_callback(
             remote_root.clone(),
             Some(plist::Value::Dictionary(options)),
             |(percent, _): (u64, ())| async move {
-                ui::progress("installed", percent);
+                ui::percent("installed", percent);
             },
             (),
         )
         .await;
+    ui::progress_end();
     if let Err(e) = installed {
         let raw = chain(&e);
         return Err(Fail::new(install_advice(&raw), raw));
     }
     let _ = afc.remove_all(remote_root).await;
-    Ok(())
+    Ok(size)
 }
 
 fn install_advice(raw: &str) -> String {

@@ -13,18 +13,54 @@ set -eu
 
 BASE="${SIBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/main/minis}"
 # Of bin/siboot-aarch64, updated with it: a download that doesn't match (an
-# error page, a cut-off transfer) is never run.
-SHA256="82b673767ab45b17a3b4828b524e2a221a635d95071e14f911990cd6044edb17"
+# error page, a cut-off transfer) is never run. SIZE only draws the progress
+# bar.
+SHA256="9193b7a3d1e603f26d8c555419345673b4d8ff4e4e94af877f98a4c17b073477"
+SIZE=11290936
 
 DIR="$HOME/.siboot/bin"
 BIN="$DIR/siboot"
 
+# On a terminal, one line that redraws itself, as siboot's own screen does.
+FANCY=
+if [ -t 1 ] && [ "${TERM:-}" != dumb ] && [ -z "${NO_COLOR:-}" ]; then
+  FANCY=1
+fi
+
+# The terminal's width, so no line wraps by itself.
+COLS=$({ stty size < /dev/tty; } 2> /dev/null | cut -d ' ' -f 2) || COLS=
+case "$COLS" in
+  '' | *[!0-9]*) COLS=40 ;;
+esac
+
+# A line that stays: a mark in a color, then the text wrapped under itself.
+say() {
+  if [ -z "$FANCY" ]; then
+    echo "$3"
+    return
+  fi
+  printf '\r\033[2K'
+  first=1
+  printf '%s\n' "$3" | fold -s -w $((COLS - 5)) | while IFS= read -r line; do
+    if [ -n "$first" ]; then
+      printf '  \033[%sm%s\033[0m %s\n' "$2" "$1" "$line"
+      first=
+    else
+      printf '    %s\n' "$line"
+    fi
+  done
+}
+
+ok() { say ✓ '1;32' "$1"; }
+
+fail() {
+  say ✗ '1;31' "$1" >&2
+  exit 1
+}
+
 case "$(uname -m)" in
   aarch64 | arm64) ;;
-  *)
-    echo "siboot runs in Open Minis on an iPhone (aarch64); this is $(uname -m)." >&2
-    exit 1
-    ;;
+  *) fail "siboot runs in Open Minis on an iPhone (aarch64); this is $(uname -m)." ;;
 esac
 
 fetch() {
@@ -37,23 +73,83 @@ fetch() {
 
 sha() { sha256sum "$1" | cut -d ' ' -f 1; }
 
+# `n` copies of a string.
+repeat() {
+  n=$1
+  out=
+  while [ "$n" -gt 0 ]; do
+    out="$out$2"
+    n=$((n - 1))
+  done
+  printf '%s' "$out"
+}
+
+# Tenths of a megabyte, as "10.7".
+megabytes() {
+  tenths=$(($1 * 10 / 1048576))
+  printf '%d.%d' $((tenths / 10)) $((tenths % 10))
+}
+
+# One frame: spinner, bar, percentage and, where there's room, megabytes.
+frame() {
+  have=$1
+  case $2 in
+    0) spin=⠋ ;; 1) spin=⠙ ;; 2) spin=⠹ ;; 3) spin=⠸ ;; 4) spin=⠼ ;;
+    5) spin=⠴ ;; 6) spin=⠦ ;; 7) spin=⠧ ;; 8) spin=⠇ ;; *) spin=⠏ ;;
+  esac
+  percent=$((have * 100 / SIZE))
+  [ "$percent" -gt 99 ] && percent=99
+  size=" $(megabytes "$have")/$(megabytes "$SIZE") MB"
+  # "  ⠋ Downloading siboot " and " 42%", a column spare.
+  cells=$((COLS - 29))
+  if [ "$cells" -ge $((12 + ${#size})) ]; then
+    cells=$((cells - ${#size}))
+  else
+    size=
+  fi
+  [ "$cells" -gt 24 ] && cells=24
+  [ "$cells" -lt 4 ] && cells=4
+  full=$((percent * cells / 100))
+  printf '\r\033[2K  \033[36m%s\033[0m Downloading siboot \033[36m%s\033[0m\033[2m%s\033[0m %3d%%%s' \
+    "$spin" "$(repeat "$full" ━)" "$(repeat $((cells - full)) ─)" "$percent" "$size"
+}
+
+# The download in the background, and a frame every tenth of a second from
+# how much of it has arrived.
+download() {
+  rm -f "$BIN.part"
+  if [ -z "$FANCY" ]; then
+    echo "downloading siboot ($(megabytes "$SIZE") MB) …"
+    fetch "$BASE/bin/siboot-aarch64" "$BIN.part"
+    return
+  fi
+  fetch "$BASE/bin/siboot-aarch64" "$BIN.part" < /dev/null 2> /dev/null &
+  pid=$!
+  i=0
+  while kill -0 "$pid" 2> /dev/null; do
+    have=$({ wc -c < "$BIN.part"; } 2> /dev/null || echo 0)
+    frame $((have + 0)) "$i"
+    i=$(((i + 1) % 10))
+    sleep 0.1 2> /dev/null || sleep 1
+  done
+  wait "$pid"
+}
+
 mkdir -p "$DIR"
 if [ -f "$BIN" ] && [ "$(sha "$BIN")" = "$SHA256" ]; then
-  echo "siboot is up to date"
+  ok "siboot is up to date"
 else
-  echo "downloading siboot (12 MB) …"
-  if ! fetch "$BASE/bin/siboot-aarch64" "$BIN.part"; then
+  if ! download; then
     rm -f "$BIN.part"
-    echo "Couldn't download siboot. Check the internet connection and try again." >&2
-    exit 1
+    fail "Couldn't download siboot. Check the internet connection and try again."
   fi
   if [ "$(sha "$BIN.part")" != "$SHA256" ]; then
     rm -f "$BIN.part"
-    echo "The siboot download didn't match its checksum. Try again in a few minutes." >&2
-    exit 1
+    fail "The siboot download didn't match its checksum. Try again in a few minutes."
   fi
   chmod 755 "$BIN.part"
   mv "$BIN.part" "$BIN"
+  ok "siboot downloaded and checked ($(megabytes "$SIZE") MB)"
 fi
 
 # So `siboot` works on its own from now on (Minis's shell runs as root).

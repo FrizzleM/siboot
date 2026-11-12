@@ -21,6 +21,8 @@ pub struct Signed {
     pub app_dir: PathBuf,
     pub bundle_id: String,
     pub name: String,
+    /// `CFBundleShortVersionString`, when it has one.
+    pub version: Option<String>,
 }
 
 /// `--ipa` as a path, or the URL it names, or SideInstaller's latest release.
@@ -44,7 +46,8 @@ pub async fn fetch_ipa(args: &Args) -> Result<PathBuf> {
 }
 
 async fn download(url: &str, dest: &Path) -> Result<PathBuf> {
-    ui::info(&format!("downloading {url}"));
+    ui::status("downloading SideInstaller");
+    ui::detail(url);
     let client = reqwest::Client::builder()
         .user_agent(format!("siboot/{VERSION}"))
         .build()
@@ -74,7 +77,6 @@ async fn download(url: &str, dest: &Path) -> Result<PathBuf> {
         )
     })?;
     let mut received: u64 = 0;
-    let mut shown = u64::MAX;
     loop {
         let chunk = response.chunk().await.map_err(|e| {
             Fail::new(
@@ -91,13 +93,10 @@ async fn download(url: &str, dest: &Path) -> Result<PathBuf> {
         })?;
         received += chunk.len() as u64;
         if let Some(total) = total.filter(|t| *t > 0) {
-            let percent = received * 100 / total;
-            if percent != shown && (percent.is_multiple_of(5) || percent == 100) {
-                ui::progress("downloaded", percent);
-                shown = percent;
-            }
+            ui::progress("downloaded", received, total);
         }
     }
+    ui::progress_end();
     drop(file);
     std::fs::rename(&partial, dest)
         .map_err(|e| Fail::new(format!("Couldn't write {}.", dest.display()), e.to_string()))?;
@@ -132,7 +131,7 @@ fn check_ipa(path: &Path) -> Result<()> {
 }
 
 pub async fn sign(session: &mut Session, ipa: &Path, device: &DeviceInfo) -> Result<Signed> {
-    ui::info("registering this iPhone with your team and signing (this takes a while here) …");
+    ui::status("signing; this takes a while here");
     let (app_dir, _special) = session
         .sideloader
         .sign_app(
@@ -148,12 +147,13 @@ pub async fn sign(session: &mut Session, ipa: &Path, device: &DeviceInfo) -> Res
             let text = crate::error_text::report_text(&e);
             Fail::new(sign_advice(&text), text)
         })?;
-    let (bundle_id, name) = bundle_info(&app_dir)?;
+    let (bundle_id, name, version) = bundle_info(&app_dir)?;
     ui::ok(&format!("signed {name} as {bundle_id}"));
     Ok(Signed {
         app_dir,
         bundle_id,
         name,
+        version,
     })
 }
 
@@ -178,8 +178,8 @@ fn sign_advice(text: &str) -> String {
     }
 }
 
-/// Bundle id and Home Screen name of the signed app.
-fn bundle_info(app_dir: &Path) -> Result<(String, String)> {
+/// Bundle id, Home Screen name and version of the signed app.
+fn bundle_info(app_dir: &Path) -> Result<(String, String, Option<String>)> {
     let info: plist::Dictionary = plist::from_file(app_dir.join("Info.plist"))
         .map_err(|e| Fail::new("The signed app has no readable Info.plist.", e.to_string()))?;
     let text = |key: &str| {
@@ -197,7 +197,8 @@ fn bundle_info(app_dir: &Path) -> Result<(String, String)> {
         .filter(|n| !n.is_empty())
         .or_else(|| text("CFBundleName"))
         .unwrap_or_else(|| "SideInstaller".into());
-    Ok((bundle_id, name))
+    let version = text("CFBundleShortVersionString").filter(|v| !v.is_empty());
+    Ok((bundle_id, name, version))
 }
 
 #[cfg(test)]
@@ -234,8 +235,12 @@ mod tests {
         );
         info.insert("CFBundleName".into(), "SideInstaller".into());
         plist::to_file_xml(dir.join("Info.plist"), &info).unwrap();
-        let (id, name) = bundle_info(&dir).unwrap();
+        let (id, name, version) = bundle_info(&dir).unwrap();
         assert_eq!(id, "com.frizzlem.sideinstaller.ABCDE12345");
         assert_eq!(name, "SideInstaller");
+        assert_eq!(version, None);
+        info.insert("CFBundleShortVersionString".into(), "1.7.0".into());
+        plist::to_file_xml(dir.join("Info.plist"), &info).unwrap();
+        assert_eq!(bundle_info(&dir).unwrap().2.as_deref(), Some("1.7.0"));
     }
 }

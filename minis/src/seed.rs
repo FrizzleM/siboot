@@ -33,6 +33,7 @@ pub async fn hand_over(
     bundle_id: &str,
     pairing_path: &Path,
 ) -> Result<()> {
+    ui::activity("opening SideInstaller's container");
     let pairing = std::fs::read(pairing_path).map_err(|e| {
         Fail::new(
             format!("Couldn't read {}.", pairing_path.display()),
@@ -54,6 +55,7 @@ pub async fn hand_over(
     for dir in ["/Library", "/Library/Application Support"] {
         let _ = afc.mk_dir(dir).await;
     }
+    ui::activity("writing the pairing file into it");
     let written = write_verified(&mut afc, PAIRING_PATH, &pairing).await?;
     ui::ok(&format!(
         "pairing file written into SideInstaller ({written} bytes, read back and checked)"
@@ -70,9 +72,9 @@ pub async fn hand_over(
         )),
         Err(e) => {
             ui::warn(
-                "Couldn't mark the pairing file as imported. SideInstaller still connects with it,",
+                "Couldn't mark the pairing file as imported. SideInstaller still connects with it, \
+                 but may offer to pair again.",
             );
-            ui::warn("but may offer to pair again.");
             ui::detail(&e.raw);
         }
     }

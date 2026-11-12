@@ -41,23 +41,40 @@ pub const ROOTSHELL_ROUTE: &str = "Pair in rootshell (App Store) first: turn on 
      `ifconfig en0 > ifconfig.txt`, `./siboot-pair.wasm`. Once it has paired, leave it running \
      and run siboot here again: it asks for the transfer code rootshell shows.";
 
-pub async fn ensure(args: &Args, path: &Path) -> Result<()> {
+/// Where the pairing that works came from.
+pub enum Source {
+    /// The file saved on an earlier run.
+    Saved,
+    /// siboot-pair's offer in rootshell.
+    Rootshell,
+}
+
+pub async fn ensure(args: &Args, path: &Path) -> Result<Source> {
     let mut saved_refused = None;
     if path.exists() {
+        ui::activity("trying the pairing file saved on an earlier run");
         match tunnel::verify(args.device, path).await {
             Ok(()) => {
                 ui::ok("this iPhone accepts the pairing file saved on an earlier run");
-                return Ok(());
+                return Ok(Source::Saved);
             }
             Err(f) => {
-                ui::info("this iPhone doesn't accept the saved pairing file; taking the one from rootshell");
+                ui::note("This iPhone doesn't accept the saved pairing file, so siboot takes the one from rootshell.");
                 ui::detail(&f.raw);
                 saved_refused = Some(f);
             }
         }
     }
     let offer = SocketAddr::from(([127, 0, 0, 1], HANDOFF_PORT));
-    let ask = || ui::ask("Transfer code shown in rootshell: ");
+    ui::activity("asking rootshell for its pairing file");
+    let ask = || {
+        ui::ask_code(
+            "rootshell is offering its file",
+            "Code",
+            "type the transfer code it shows",
+            "Transfer code shown in rootshell: ",
+        )
+    };
     if !take(offer, path, ask, ANSWER_WAIT).await? {
         return Err(saved_refused.unwrap_or_else(|| {
             Fail::new(
@@ -66,9 +83,10 @@ pub async fn ensure(args: &Args, path: &Path) -> Result<()> {
             )
         }));
     }
+    ui::activity("checking it with this iPhone");
     tunnel::verify(args.device, path).await?;
     ui::ok("this iPhone accepts the pairing file from rootshell");
-    Ok(())
+    Ok(Source::Rootshell)
 }
 
 /// siboot-pair's answer to one code.
@@ -119,12 +137,13 @@ async fn take(
     let Ok(Ok(mut stream)) = connect().await else {
         return Ok(false);
     };
-    ui::ok("rootshell is offering the pairing file it made");
+    ui::ok("rootshell is offering its file");
     for attempt in 1..=CODE_TRIES {
         let Some(typed) = ask() else {
             return Ok(false);
         };
         let code: String = typed.chars().filter(char::is_ascii_digit).collect();
+        ui::activity("sending the code to rootshell");
         // siboot-pair answers one request per connection.
         if attempt > 1 {
             stream = match connect().await {
@@ -157,7 +176,13 @@ async fn take(
                 return Err(Fail::new("rootshell sent something that isn't a pairing file.", answer))
             }
             Ok(Ok(Reply::WrongCode)) => {
-                ui::warn("That isn't the code rootshell shows.");
+                let left = CODE_TRIES - attempt;
+                if left > 0 {
+                    ui::warn(&format!(
+                        "That isn't the code rootshell shows ({left} more {}).",
+                        if left == 1 { "try" } else { "tries" }
+                    ));
+                }
                 continue;
             }
             Ok(Ok(Reply::File(file))) => file,

@@ -39,6 +39,8 @@ const MACHINE_NAME: &str = "siboot";
 
 pub struct Session {
     pub sideloader: Sideloader,
+    /// The developer team signing for it, as "name (ID)".
+    pub team: String,
 }
 
 pub async fn sign_in(args: &Args) -> Result<Session> {
@@ -48,7 +50,13 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
         .or_else(|| std::env::var("SIBOOT_APPLE_ID").ok())
     {
         Some(id) => id,
-        None => ui::ask("Apple Account email: ").unwrap_or_default(),
+        None => ui::ask_text(
+            "sign in to your Apple Account",
+            "Email",
+            "your Apple Account",
+            "Apple Account email: ",
+        )
+        .unwrap_or_default(),
     };
     let apple_id = apple_id.trim().to_string();
     if apple_id.is_empty() {
@@ -56,13 +64,19 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
     }
     let password = match std::env::var("SIBOOT_PASSWORD") {
         Ok(p) if !p.is_empty() => p,
-        _ => rpassword::prompt_password("      Password (not shown; it goes only to Apple): ")
-            .map_err(|e| {
-                Fail::new(
-                    "Couldn't read the password from the terminal.",
-                    e.to_string(),
-                )
-            })?,
+        _ => ui::ask_secret(
+            "sign in to your Apple Account",
+            "Password",
+            "it goes only to Apple",
+            "Password (not shown; it goes only to Apple): ",
+        )
+        .map_err(|e| {
+            Fail::new(
+                "Couldn't read the password from the terminal.",
+                e.to_string(),
+            )
+        })?
+        .unwrap_or_default(),
     };
     if password.is_empty() {
         return Err(Fail::new("No password given.", ""));
@@ -79,7 +93,7 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
     let servers = candidates(args.anisette.as_deref(), last_server(&args.home).as_deref());
     let mut last_error = String::new();
     for server in &servers {
-        ui::info(&format!("signing in through {}", host_of(server)));
+        ui::status(&format!("signing in through {}", host_of(server)));
         match apple_session::open(
             &apple_id, &password, server, &storage, true, two_factor, "Apple ID",
         )
@@ -104,12 +118,13 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
                         crate::error_text::report_text(&e),
                     )
                 })?;
-                ui::ok(&format!(
-                    "signed in — team {} ({})",
+                let team = format!(
+                    "{} ({})",
                     team.name.as_deref().unwrap_or("unnamed"),
                     team.team_id
-                ));
-                return Ok(Session { sideloader });
+                );
+                ui::ok(&format!("signed in — team {team}"));
+                return Ok(Session { sideloader, team });
             }
             Err(e) => {
                 if let Some(advice) = stops_sign_in(&e) {
@@ -256,38 +271,123 @@ impl From<&TwoFactorCallbackParams> for Prompt {
 }
 
 fn ask_two_factor(prompt: &Prompt) -> TwoFactorCallbackResponse {
-    println!();
-    if let Some(error) = &prompt.last_error {
-        ui::warn(&format!("Apple: {error}"));
+    if ui::is_live() {
+        if let Some(answer) = ask_two_factor_live(prompt) {
+            return answer;
+        }
     }
-    let number = |id: Option<u32>| {
-        prompt
-            .numbers
+    ask_two_factor_plain(prompt)
+}
+
+impl Prompt {
+    fn number(&self, id: Option<u32>) -> String {
+        self.numbers
             .iter()
             .find(|(n, _, _)| Some(*n) == id)
             .map(|(_, number, _)| number.clone())
             .unwrap_or_else(|| "your trusted number".into())
-    };
-    match prompt.method {
-        Method::Devices => ui::info("Apple sent a verification code to your other Apple devices."),
-        Method::Sms => ui::info(&format!(
-            "Apple texted a verification code to {}.",
-            number(prompt.selected)
-        )),
-        Method::Voice => ui::info(&format!(
-            "Apple is calling {} with a verification code.",
-            number(prompt.selected)
-        )),
-        Method::Choose => ui::info("Choose how Apple should send the verification code."),
     }
-    if !prompt.numbers.is_empty() {
-        for (id, number, mode) in &prompt.numbers {
-            let how = if mode == "voice" { " (calls only)" } else { "" };
-            ui::info(&format!("  {id}: {number}{how}"));
+
+    /// The other ways to get a code, as a menu: each trusted number (texted,
+    /// or called), the devices, again, or not at all.
+    fn ways(&self) -> Vec<(String, TwoFactorCallbackResponse)> {
+        let mut ways = Vec::new();
+        for (id, number, mode) in &self.numbers {
+            // "voice": the number takes calls only.
+            if mode != "voice" {
+                ways.push((
+                    format!("Text {number}"),
+                    TwoFactorCallbackResponse::SendSms(*id),
+                ));
+            }
+            ways.push((
+                format!("Call {number}"),
+                TwoFactorCallbackResponse::CallNumber(*id),
+            ));
+        }
+        ways.push((
+            "Send it to your Apple devices".into(),
+            TwoFactorCallbackResponse::SendToDevices,
+        ));
+        if self.method != Method::Choose {
+            ways.push((
+                "Send the same again".into(),
+                TwoFactorCallbackResponse::ResendCode,
+            ));
+        }
+        ways.push((
+            "Cancel the sign-in".into(),
+            TwoFactorCallbackResponse::Abort,
+        ));
+        ways
+    }
+}
+
+/// The code in boxes, and a menu of other ways to get it. None when the
+/// screen can't read keys after all.
+fn ask_two_factor_live(prompt: &Prompt) -> Option<TwoFactorCallbackResponse> {
+    let sent = match prompt.method {
+        Method::Devices => Some("sent to your Apple devices".to_string()),
+        Method::Sms => Some(format!("texted to {}", prompt.number(prompt.selected))),
+        Method::Voice => Some(format!(
+            "Apple is calling {}",
+            prompt.number(prompt.selected)
+        )),
+        Method::Choose => None,
+    };
+    let mut warning = prompt.last_error.as_ref().map(|e| format!("Apple: {e}"));
+    loop {
+        if let Some(sent) = &sent {
+            let mut hints = Vec::new();
+            if let Some(warning) = warning.take() {
+                hints.push(ui::Hint::Warning(warning));
+            }
+            hints.push(ui::Hint::Plain(sent.clone()));
+            hints.push(ui::Hint::Plain("o: other ways · esc: cancel".into()));
+            match ui::ask_code_or_more("enter the code Apple sent", "Code", &hints)? {
+                ui::CodeAnswer::Code(code) => {
+                    return Some(TwoFactorCallbackResponse::SubmitCode(code))
+                }
+                ui::CodeAnswer::Cancel => return Some(TwoFactorCallbackResponse::Abort),
+                ui::CodeAnswer::More => {}
+            }
+        }
+        let ways = prompt.ways();
+        let labels: Vec<String> = ways.iter().map(|(label, _)| label.clone()).collect();
+        match ui::choose("how should Apple send the code?", &labels) {
+            Some(i) => return ways.into_iter().nth(i).map(|(_, answer)| answer),
+            // Back to the boxes, when a code is on its way.
+            None if sent.is_some() => continue,
+            None => return Some(TwoFactorCallbackResponse::Abort),
         }
     }
-    ui::info("Type the code, or: t N to text number N, c N to call it, d for your devices,");
-    ui::info("r to send it again, q to give up.");
+}
+
+fn ask_two_factor_plain(prompt: &Prompt) -> TwoFactorCallbackResponse {
+    println!();
+    if let Some(error) = &prompt.last_error {
+        ui::warn(&format!("Apple: {error}"));
+    }
+    match prompt.method {
+        Method::Devices => {
+            ui::status("Apple sent a verification code to your other Apple devices.")
+        }
+        Method::Sms => ui::status(&format!(
+            "Apple texted a verification code to {}.",
+            prompt.number(prompt.selected)
+        )),
+        Method::Voice => ui::status(&format!(
+            "Apple is calling {} with a verification code.",
+            prompt.number(prompt.selected)
+        )),
+        Method::Choose => ui::status("Choose how Apple should send the verification code."),
+    }
+    for (id, number, mode) in &prompt.numbers {
+        let how = if mode == "voice" { " (calls only)" } else { "" };
+        ui::status(&format!("  {id}: {number}{how}"));
+    }
+    ui::status("Type the code, or: t N to text number N, c N to call it, d for your devices,");
+    ui::status("r to send it again, q to give up.");
     loop {
         let Some(line) = ui::ask("Code: ") else {
             return TwoFactorCallbackResponse::Abort;
@@ -333,27 +433,55 @@ fn parse_two_factor(line: &str) -> Option<TwoFactorCallbackResponse> {
 #[allow(clippy::ptr_arg)] // isideload's `MaxCertsBehavior::Prompt` takes a `&Vec`
 fn choose_certificates_to_revoke(certs: &Vec<DevelopmentCertificate>) -> Option<Vec<String>> {
     tokio::task::block_in_place(|| {
-        println!();
-        ui::warn("This Apple Account already has as many signing certificates as Apple allows,");
-        ui::warn("so one must be revoked to make siboot's. Apps signed with a revoked certificate");
-        ui::warn(
-            "stop opening, on every device, until they're signed again. This can't be undone.",
-        );
-        for (i, cert) in certs.iter().enumerate() {
-            ui::info(&format!(
-                "  {}: {} — made on \"{}\", serial {}",
-                i + 1,
-                cert.name.as_deref().unwrap_or("certificate"),
-                cert.machine_name.as_deref().unwrap_or("?"),
-                cert.serial_number.as_deref().unwrap_or("?"),
-            ));
+        if !ui::is_live() {
+            return choose_certificates_plain(certs);
         }
-        let line = ui::ask("Number to revoke (empty to stop): ")?;
-        let index = line.trim().parse::<usize>().ok()?.checked_sub(1)?;
+        ui::warn(
+            "This Apple Account already has as many signing certificates as Apple allows, so one \
+             must be revoked to make siboot's. Apps signed with a revoked certificate stop \
+             opening, on every device, until they're signed again. This can't be undone.",
+        );
+        let mut labels: Vec<String> = certs
+            .iter()
+            .map(|cert| {
+                format!(
+                    "{} · \"{}\" · {}",
+                    cert.name.as_deref().unwrap_or("certificate"),
+                    cert.machine_name.as_deref().unwrap_or("?"),
+                    cert.serial_number.as_deref().unwrap_or("?"),
+                )
+            })
+            .collect();
+        labels.push("None: stop here".into());
+        let index = ui::choose("revoke which certificate?", &labels)?;
         let serial = certs.get(index)?.serial_number.clone()?;
-        ui::info(&format!("revoking certificate {serial}"));
+        if !ui::confirm("revoke it? this can't be undone", false) {
+            return None;
+        }
+        ui::status(&format!("revoking certificate {serial}"));
         Some(vec![serial])
     })
+}
+
+fn choose_certificates_plain(certs: &[DevelopmentCertificate]) -> Option<Vec<String>> {
+    println!();
+    ui::warn("This Apple Account already has as many signing certificates as Apple allows,");
+    ui::warn("so one must be revoked to make siboot's. Apps signed with a revoked certificate");
+    ui::warn("stop opening, on every device, until they're signed again. This can't be undone.");
+    for (i, cert) in certs.iter().enumerate() {
+        ui::status(&format!(
+            "  {}: {} — made on \"{}\", serial {}",
+            i + 1,
+            cert.name.as_deref().unwrap_or("certificate"),
+            cert.machine_name.as_deref().unwrap_or("?"),
+            cert.serial_number.as_deref().unwrap_or("?"),
+        ));
+    }
+    let line = ui::ask("Number to revoke (empty to stop): ")?;
+    let index = line.trim().parse::<usize>().ok()?.checked_sub(1)?;
+    let serial = certs.get(index)?.serial_number.clone()?;
+    ui::status(&format!("revoking certificate {serial}"));
+    Some(vec![serial])
 }
 
 #[cfg(test)]

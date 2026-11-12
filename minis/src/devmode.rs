@@ -100,7 +100,7 @@ pub async fn run(
     };
     match on {
         Some(true) => return Ok(Outcome::AlreadyOn),
-        Some(false) => ui::info("Developer Mode is off"),
+        Some(false) => ui::status("Developer Mode is off"),
         None => {}
     }
 
@@ -120,9 +120,11 @@ pub async fn run(
         };
     }
 
-    ui::warn("Without a passcode, this iPhone restarts right away to turn Developer Mode on,");
-    ui::warn("and Minis stops with it. Once you unlock it, tap Turn On in the alert iOS shows.");
-    ui::info("With a passcode, iOS refuses, and siboot shows the switch in Settings instead.");
+    ui::warn(
+        "Without a passcode, this iPhone restarts right away to turn Developer Mode on, and Minis \
+         stops with it. Once you unlock it, tap Turn On in the alert iOS shows.",
+    );
+    ui::note("With a passcode, iOS refuses, and siboot shows the switch in Settings instead.");
     if !confirm() {
         return Err(Fail::new(
             "Nothing was sent, so Developer Mode stays off. `siboot developer-mode` without \
@@ -138,7 +140,7 @@ pub async fn run(
         }
         // AMFI answers {Error: "Device has a passcode set"}.
         Sent::Refused(raw) if raw.to_lowercase().contains("passcode") => {
-            ui::info("iOS turns it on from here only while the iPhone has no passcode");
+            ui::note("iOS turns it on from here only while the iPhone has no passcode.");
             ui::detail(&raw);
             match send(device, Action::Show).await? {
                 Sent::Done => Ok(Outcome::ShownForPasscode),

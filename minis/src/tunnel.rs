@@ -62,6 +62,7 @@ pub async fn open(addr: SocketAddr, path: &Path) -> Result<Connection> {
     )
     .await?;
     ui::detail(&format!("tunnel listener on port {port}"));
+    ui::activity("connecting to the tunnel listener");
     let stream = match timeout(
         Duration::from_secs(10),
         TcpStream::connect((addr.ip(), port)),
@@ -115,6 +116,7 @@ pub async fn open(addr: SocketAddr, path: &Path) -> Result<Connection> {
     let mut adapter = Adapter::new(Box::new(tunnel.into_inner()), client_ip, server_ip);
     adapter.set_mss(mtu.saturating_sub(60));
     let mut adapter = adapter.to_async_handle();
+    ui::activity("reaching RSD inside the tunnel");
     let rsd = match timeout(Duration::from_secs(15), adapter.connect(rsd_port)).await {
         Ok(Ok(s)) => s,
         Ok(Err(e)) => {
@@ -220,6 +222,7 @@ async fn pair_verified(
     };
     let mut rpc = RemotePairingClient::new(RpPairingSocket::new(stream), HOSTNAME);
     step("greeting the iPhone", 10, rpc.attempt_pair_verify()).await?;
+    ui::activity("checking the pairing with it");
     match timeout(Duration::from_secs(15), rpc.validate_pairing(file)).await {
         Ok(Ok(())) => Ok(rpc),
         Ok(Err(e)) => Err(Fail::new(
@@ -234,12 +237,14 @@ async fn pair_verified(
     }
 }
 
-/// Await `future` for up to `secs`, naming `what` if it fails or runs out.
+/// Await `future` for up to `secs`, showing `what` on the live screen while
+/// it runs, and naming it if it fails or runs out.
 pub async fn step<T, E: std::error::Error>(
     what: &str,
     secs: u64,
     future: impl std::future::Future<Output = std::result::Result<T, E>>,
 ) -> Result<T> {
+    ui::activity(what);
     match timeout(Duration::from_secs(secs), future).await {
         Ok(Ok(v)) => Ok(v),
         Ok(Err(e)) => Err(Fail::new(format!("Failed while {what}."), chain(&e))),

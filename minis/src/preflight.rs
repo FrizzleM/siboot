@@ -13,11 +13,14 @@ use tokio::time::timeout;
 use crate::fail::{chain, Fail, Result};
 use crate::{ui, Args, Command};
 
-pub async fn run(args: &Args) -> Result<()> {
+/// True when the internet was checked too.
+pub async fn run(args: &Args) -> Result<bool> {
     // The tunnel stays on this iPhone; sign-in and the download don't.
-    if args.command == Command::All || args.command == Command::Check {
+    let online = args.command == Command::All || args.command == Command::Check;
+    if online {
         check_online(args).await?;
     }
+    ui::activity(&format!("reaching this iPhone at {}", args.device));
     let found = probe(args.device).await?;
     ui::ok(&format!(
         "this iPhone answers on {} (RPPairing, wire protocol {})",
@@ -26,7 +29,7 @@ pub async fn run(args: &Args) -> Result<()> {
     if let Some(name) = found.name {
         ui::detail(&format!("it calls itself \"{name}\""));
     }
-    Ok(())
+    Ok(online)
 }
 
 /// GitHub (the IPA) and Apple's sign-in server answer over TLS. Apple's
@@ -48,6 +51,7 @@ async fn check_online(args: &Args) -> Result<()> {
         .is_none_or(|ipa| ipa.starts_with("http"));
     if downloads {
         let url = args.ipa.as_deref().unwrap_or(crate::sign::RELEASE_IPA);
+        ui::activity("reaching GitHub");
         match client.head(url).send().await {
             Ok(r) if r.status().is_success() => {
                 ui::ok("GitHub answers, and the SideInstaller release is there")
@@ -66,6 +70,7 @@ async fn check_online(args: &Args) -> Result<()> {
         }
     }
     // Any HTTP answer proves DNS, the route and the certificate chain.
+    ui::activity("reaching Apple's sign-in server");
     match client
         .get("https://gsa.apple.com/grandslam/GsService2/lookup")
         .send()
