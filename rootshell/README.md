@@ -22,16 +22,25 @@ ifconfig en0 > ifconfig.txt
 
 Open **Settings › Privacy & Security › Developer Mode**, scroll to the bottom,
 tap **Pair with siboot**, and enter your passcode and the 6-digit code
-siboot-pair shows (it also arrives as a notification). Leave rootshell running,
-and in Open Minis's terminal run:
+siboot-pair shows in large digits (it also arrives as a notification). Leave
+rootshell running, and in Open Minis's terminal run:
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
 ```
 
-The first time, siboot asks for the transfer code siboot-pair shows and takes
-the pairing file. After that it uses the file it saved and doesn't ask, so
-siboot-pair keeps offering until you close its tab.
+The first time, siboot asks for the transfer code siboot-pair shows (in large
+digits, and as a notification you can pull down in Minis) and takes the pairing
+file. After that it uses the file it saved and doesn't ask, so siboot-pair keeps
+offering until you close its tab.
+
+siboot-pair's screen is lines that stay and one live line at the bottom, which
+says what it's waiting for and is rewritten in place: a WASM program in
+rootshell can't learn the terminal's size and blocks in every socket call, so
+that line is kept short enough never to wrap, and moves (a spinner) only while
+the program is awake, during the announcement. Lines are wrapped for an iPhone
+upright, about 40 columns, or to `COLUMNS` when it's set. `--plain` prints plain
+lines instead.
 
 ## How it works
 
@@ -51,14 +60,15 @@ Preview 1 programs, and lends them sockets (`rootshell_socket_*`).
    has no poll and the program then blocks in `accept`, so Settings is answered
    from mDNSResponder's cache.
 3. Pairs with idevice's `PairableHost`, the responder SideInstaller uses. The
-   code is printed and posted as a notification (OSC 777, which rootshell's
-   terminal turns into one, also in the background). A stray connection or a
+   code is printed in large digits and posted as a notification (OSC 777, which
+   rootshell's terminal turns into one, also in the background). A stray connection or a
    mistyped code leaves the entry up for another tap, three connections in all.
 4. Writes `rp_pairing_file.plist` and `host_alt_irk` into rootshell's folder,
    so a second run keeps the same host identity, and withdraws the announcement.
 5. Offers the file on the iPhone's own loopback, port 61207, behind a 6-digit
-   transfer code, which siboot in Minis asks for. The code keeps other apps on
-   the iPhone from taking the file: five wrong ones end the offer.
+   transfer code, which siboot in Minis asks for, shown and posted the same
+   way. The code keeps other apps on the iPhone from taking the file: five
+   wrong ones end the offer.
 
 ## Building
 
@@ -97,3 +107,10 @@ offer), the announcement's records and the address out of `ifconfig` output.
   are gone, and so is the Files app fallback. Its `.wasm` imports a subset of
   what 0.1.0's did. Tested with `cargo test` on a Mac; not yet run on an iPhone.
 - **0.2.1** only adds a line saying siboot may go ahead without asking.
+- **0.3.0** is 0.2.1 with the screen above, the transfer code as a notification
+  too, and `--plain`; pairing and the hand-off are unchanged. Tested with
+  `cargo test` on a Mac (14 tests), and the host build end to end on the Mac's
+  loopback in a 40-column terminal, against the tests' fake iPhone and a
+  stand-in for siboot's side: a stray connection, the pairing, a wrong transfer
+  code, the hand-off. Its `.wasm` imports the same functions as 0.2.1's. Not yet
+  run on an iPhone.

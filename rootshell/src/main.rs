@@ -16,6 +16,7 @@
 
 mod mdns;
 mod rs;
+mod ui;
 
 #[cfg(test)]
 mod fake_iphone;
@@ -45,30 +46,44 @@ struct Args {
     ip: [u8; 4],
     port: Option<u16>,
     service: String,
+    /// Plain lines, not the live line and large digits.
+    plain: bool,
 }
 
+/// Kept narrow: rootshell's terminal is an iPhone's, about 40 columns upright.
 fn usage() {
     println!(
-        "siboot-pair {VERSION} — pairs this iPhone with itself, from rootshell.
+        "siboot-pair {VERSION}
+Pairs this iPhone with itself, from rootshell.
 
 USAGE
-    ifconfig en0 > ifconfig.txt
-    ./siboot-pair.wasm
+  ifconfig en0 > ifconfig.txt
+  ./siboot-pair.wasm
 
-    One line at a time. It reads this iPhone's Wi-Fi address from ifconfig.txt
-    (a WASM program can't find it itself). Before running it, turn on
-    rootshell's Settings › Location Diary Mode › Session Only, which keeps
-    rootshell running while you're in Settings. After pairing it hands the
-    pairing file to siboot in Open Minis.
+  One line at a time. It reads this
+  iPhone's Wi-Fi address from ifconfig.txt
+  (a WASM program can't find it itself).
+  Before running it, turn on rootshell's
+  Settings › Location Diary Mode › Session
+  Only, which keeps rootshell running
+  while you're in Settings. After pairing
+  it hands the pairing file to siboot in
+  Open Minis.
 
 OPTIONS
-    --port N      The port to listen on (default: a random one).
-    -h, --help    Show this message."
+  --port N
+      The port to listen on (default: a
+      random one).
+  --plain
+      Plain lines, without the live line
+      and large digits.
+  -h, --help
+      Show this message."
     );
 }
 
 fn parse_args() -> Result<Option<Args>, String> {
-    let mut args = Args { ip: [0; 4], port: None, service: mdns::PAIRABLE_HOST_TYPE.into() };
+    let mut args = Args { ip: [0; 4], port: None, service: mdns::PAIRABLE_HOST_TYPE.into(), plain: false };
     let mut argv = std::env::args().skip(1);
     while let Some(arg) = argv.next() {
         let mut value = |flag: &str| argv.next().ok_or(format!("{flag} needs a value"));
@@ -78,6 +93,7 @@ fn parse_args() -> Result<Option<Args>, String> {
                 println!("siboot-pair {VERSION}");
                 std::process::exit(0);
             }
+            "--plain" => args.plain = true,
             "--port" => {
                 args.port = Some(value("--port")?.parse().map_err(|_| "--port needs a number".to_string())?)
             }
@@ -128,22 +144,28 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match run(&args) {
+    ui::init(args.plain);
+    let outcome = run(&args);
+    let code = match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(problem) => {
-            println!();
-            println!("Stopped: {problem}");
+            ui::stopped(&problem);
             ExitCode::FAILURE
         }
-    }
+    };
+    ui::end();
+    code
 }
 
 fn run(args: &Args) -> Result<(), String> {
-    println!("siboot-pair {VERSION} — pairs this iPhone with itself");
-    println!();
-    println!("Keep Location Diary on (rootshell › Settings › Location Diary Mode ›");
-    println!("Session Only): it keeps rootshell running while you're in Settings.");
-    println!();
+    ui::header(VERSION);
+    ui::blank();
+    ui::say(
+        ui::Mark::Warn,
+        "Keep Location Diary on (rootshell › Settings › Location Diary Mode › Session Only): it \
+         keeps rootshell running while you're in Settings.",
+    );
+    ui::blank();
 
     let (mut file, alt_irk) = identity();
     let mut info = PairableHostInfo::generate(HOST_NAME, HOST_MODEL);
@@ -164,9 +186,10 @@ fn run(args: &Args) -> Result<(), String> {
     for i in 0..3 {
         match rs::Socket::send_datagram(&announcement, mdns::GROUP, mdns::PORT) {
             Ok(()) => sent += 1,
-            Err(e) => println!("  announcement {} failed: {e}", i + 1),
+            Err(e) => ui::say(ui::Mark::Warn, &format!("Announcement {} failed: {e}", i + 1)),
         }
-        std::thread::sleep(Duration::from_secs(1));
+        let dots: String = (0..3).map(|n| if n <= i { '●' } else { '○' }).collect();
+        ui::spin(&format!("Announcing \"Pair with {HOST_NAME}\" {dots}"), Duration::from_secs(1));
     }
     if sent == 0 {
         return Err("rootshell couldn't send the Bonjour announcement. Allow it Local Network \
@@ -174,14 +197,16 @@ fn run(args: &Args) -> Result<(), String> {
                     this again."
             .into());
     }
-    println!("OK announced \"Pair with {HOST_NAME}\" on port {port}");
-    println!();
-    println!("Now, on this iPhone:");
-    println!("  1. Open Settings › Privacy & Security › Developer Mode, and scroll to the bottom.");
-    println!("  2. Tap \"Pair with {HOST_NAME}\". It can take a few seconds to appear.");
-    println!("  3. Enter your passcode, then the 6-digit code, which arrives as a rootshell");
-    println!("     notification (it's also printed here).");
-    println!("Waiting …");
+    let [a, b, c, d] = args.ip;
+    ui::settle(ui::Mark::Good, &format!("Announced \"Pair with {HOST_NAME}\""));
+    ui::say(ui::Mark::Info, &format!("from {a}.{b}.{c}.{d}, port {port}"));
+    ui::blank();
+    ui::heading("Now, on this iPhone:");
+    ui::numbered(1, "Open Settings › Privacy & Security › Developer Mode, and scroll to the bottom.");
+    ui::numbered(2, &format!("Tap \"Pair with {HOST_NAME}\". It can take a few seconds to appear."));
+    ui::numbered(3, "Enter your passcode, then the 6-digit code. It arrives as a notification.");
+    ui::blank();
+    ui::live("Waiting for Settings…");
 
     let peer = pair(&listener, &info, &mut file, show_code)?;
     drop(listener);
@@ -191,9 +216,8 @@ fn run(args: &Args) -> Result<(), String> {
     // Withdraw the entry: nothing listens behind it now.
     let _ = rs::Socket::send_datagram(&mdns::announcement(&ad, 0), mdns::GROUP, mdns::PORT);
 
-    println!();
-    println!("OK paired with {} ({})", peer.name, peer.model);
-    println!("OK pairing file saved: Files › rootshell › {PAIRING_FILE}");
+    ui::settle(ui::Mark::Good, &format!("Paired with {} ({})", peer.name, peer.model));
+    ui::say(ui::Mark::Good, &format!("Pairing file saved: Files › rootshell › {PAIRING_FILE}"));
     hand_off(&file.to_bytes())
 }
 
@@ -212,24 +236,27 @@ fn hand_off(pairing: &[u8]) -> Result<(), String> {
         )
     })?;
     let code = transfer_code();
-    println!();
-    println!("Next, install SideInstaller with Open Minis (App Store). In Minis's terminal");
-    println!("(Minis › Settings › Terminal), run:");
-    println!();
-    println!("    {INSTALL}");
-    println!();
-    println!("siboot takes the pairing file from here. When it asks, type the transfer code:");
-    println!();
-    println!("    {} {}", &code[..3], &code[3..]);
-    println!();
-    println!("Leave rootshell running until siboot has the file (Ctrl-C stops the offer).");
-    println!("siboot only asks when it has no pairing file that works yet. If it goes");
-    println!("ahead without asking, close this tab once Minis is done.");
+    ui::blank();
+    ui::heading("Next, in Open Minis (App Store):");
+    ui::text("Install SideInstaller from its terminal (Minis › Settings › Terminal). Run:");
+    ui::blank();
+    ui::command(INSTALL);
+    ui::blank();
+    ui::heading("When siboot asks, type this code:");
+    ui::big(&code);
+    ui::notify("siboot transfer code", &format!("{} — type it in Minis when siboot asks", ui::spaced(&code)));
+    ui::blank();
+    ui::dim(
+        "siboot only asks when it has no pairing file that works yet. If it goes ahead without \
+         asking, close this tab once Minis is done. Ctrl-C stops the offer.",
+    );
+    ui::blank();
+    ui::live("Offering the file to siboot…");
     if offer(&listener, &code, pairing) {
-        println!("OK siboot has the pairing file. You can close rootshell's tab.");
+        ui::settle(ui::Mark::Good, "siboot has the pairing file. You can close rootshell's tab.");
         Ok(())
     } else {
-        Err("stopped offering the file. Run `./siboot-pair.wasm` again for a new transfer code.".into())
+        Err("the offer ended. Run `./siboot-pair.wasm` again for a new transfer code.".into())
     }
 }
 
@@ -248,12 +275,19 @@ fn offer(listener: &rs::Socket, code: &str, pairing: &[u8]) -> bool {
                 .and_then(|()| conn.write_all(pairing));
             match sent {
                 Ok(()) => return true,
-                Err(e) => println!("  sending the file broke off ({e}); waiting for siboot to ask again"),
+                Err(e) => {
+                    ui::say(ui::Mark::Warn, &format!("Sending the file broke off ({e}). Waiting for siboot to ask again."));
+                    ui::live("Offering the file to siboot…");
+                }
             }
         } else {
             wrong += 1;
             let _ = conn.write_all(b"NO\n");
-            println!("  a wrong transfer code ({wrong} of {HANDOFF_TRIES})");
+            let left = HANDOFF_TRIES - wrong;
+            if left > 0 {
+                ui::say(ui::Mark::Warn, &format!("A wrong transfer code ({wrong} of {HANDOFF_TRIES})."));
+                ui::live(&format!("Offering the file: {left} {} left…", if left == 1 { "try" } else { "tries" }));
+            }
         }
     }
     false
@@ -277,7 +311,7 @@ fn pair(
 ) -> Result<PeerDevice, String> {
     for attempt in 1..=MAX_ATTEMPTS {
         let stream = listener.accept().map_err(|e| format!("couldn't accept the connection: {e}"))?;
-        println!("Settings connected — waiting for it to ask for a code …");
+        ui::live("Settings connected, waiting…");
         let mut host = PairableHost::new(RpPairingSocket::new_device(stream), info.clone());
         let code_shown = Cell::new(false);
         let outcome = futures::executor::block_on(host.accept(file, |pin: String| {
@@ -297,29 +331,31 @@ fn pair(
                 format!("pairing didn't finish ({error}). Run this again.")
             });
         }
-        println!(
-            "{}",
+        ui::settle(
+            ui::Mark::Warn,
             match (code_shown.get(), wrong_code) {
                 (false, _) => "That connection closed before asking for a code.",
                 (true, true) => "That code didn't match. Tap the entry in Settings again for a new one.",
                 (true, false) => "Pairing stopped before it finished. Tap the entry in Settings again.",
-            }
+            },
         );
-        println!("Still waiting …");
+        ui::live("Still waiting for Settings…");
     }
     unreachable!("the loop returns on its last attempt")
 }
 
-/// The code, printed and posted as a notification: Ghostty, rootshell's
-/// terminal, turns OSC 777 into one, also with rootshell in the background.
+/// The code, in large digits and posted as a notification: Ghostty,
+/// rootshell's terminal, turns OSC 777 into one, also with rootshell in the
+/// background.
 fn show_code(pin: &str) {
-    let (a, b) = pin.split_at(pin.len().min(3));
-    println!();
-    println!("    Type this code into Settings:   {a} {b}");
-    println!();
-    print!("\x1b]777;notify;siboot pairing code;{a} {b} — type it into Settings\x07");
-    use std::io::Write as _;
-    let _ = std::io::stdout().flush();
+    ui::settle(ui::Mark::Good, "Settings connected");
+    ui::blank();
+    ui::heading("Type this code into Settings:");
+    ui::big(pin);
+    ui::dim("It's in your notifications too.");
+    ui::blank();
+    ui::notify("siboot pairing code", &format!("{} — type it into Settings", ui::spaced(pin)));
+    ui::live("Waiting for Settings to check it…");
 }
 
 /// The host identity from an earlier run, so a new pairing doesn't invalidate
