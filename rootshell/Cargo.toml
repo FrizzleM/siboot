@@ -25,11 +25,11 @@ hex = "0.4"
 # timer or JS shims are linked: the module imports nothing but WASI and
 # `rootshell_socket`.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-idevice = { path = "../rust-core/vendor/idevice", default-features = false, features = ["remote_pairing", "wasm"] }
+idevice = { path = "../SideInstaller/rust-core/vendor/idevice", default-features = false, features = ["remote_pairing", "wasm"] }
 
 # Host builds, for `cargo test`, need a TLS backend picked.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-idevice = { path = "../rust-core/vendor/idevice", default-features = false, features = ["remote_pairing", "ring"] }
+idevice = { path = "../SideInstaller/rust-core/vendor/idevice", default-features = false, features = ["remote_pairing", "ring"] }
 
 # The fake iPhone in src/fake_iphone.rs plays the device's side of pair-setup
 # against the real pairing code, so it needs the crypto idevice's responder

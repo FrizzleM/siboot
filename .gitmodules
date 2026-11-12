@@ -1,0 +1,3 @@
+[submodule "SideInstaller"]
+	path = SideInstaller
+	url = https://github.com/FrizzleM/SideInstaller.git

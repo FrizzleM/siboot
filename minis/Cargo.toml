@@ -17,7 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 # The same vendored idevice SideInstaller ships (OPACK back-reference fix and
-# logging changes, see ../rust-core/vendor/idevice/README.md), with the features
+# logging changes, see ../SideInstaller/rust-core/vendor/idevice/README.md), with the features
 # the pipeline needs:
 #   remote_pairing     pair-verify with the pairing file from rootshell
 #   tunnel_tcp_stack   in-process software TCP stack over the CDTunnel
@@ -27,7 +27,7 @@ path = "src/main.rs"
 #   house_arrest       writing the pairing file into SideInstaller's container
 #   amfi               `siboot developer-mode`
 # `aws-lc`, as rust-core: aarch64 musl is a supported aws-lc target.
-idevice = { path = "../rust-core/vendor/idevice", default-features = false, features = [
+idevice = { path = "../SideInstaller/rust-core/vendor/idevice", default-features = false, features = [
   "aws-lc",
   "remote_pairing",
   "tunnel_tcp_stack",
@@ -43,7 +43,7 @@ idevice = { path = "../rust-core/vendor/idevice", default-features = false, feat
 # Apple ID sign-in, developer portal and signing: SideInstaller's vendored copy,
 # with `install` off as in rust-core (the install goes over our own tunnel) and
 # fs-storage instead of a keyring, which iSH doesn't have.
-isideload = { path = "../rust-core/vendor/isideload", default-features = false, features = [
+isideload = { path = "../SideInstaller/rust-core/vendor/isideload", default-features = false, features = [
   "fs-storage",
 ] }
 
@@ -77,7 +77,7 @@ tracing-subscriber = "0.3"
 # signs ExtensionKit extensions (#110). Patches only apply at a workspace root,
 # so rust-core's is repeated here.
 [patch.crates-io]
-apple-codesign-quick = { path = "../rust-core/vendor/apple-codesign-quick" }
+apple-codesign-quick = { path = "../SideInstaller/rust-core/vendor/apple-codesign-quick" }
 
 [profile.release]
 # Runs under emulation inside Minis, so speed matters as much as size: signing

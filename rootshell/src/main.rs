@@ -39,7 +39,7 @@ const ALT_IRK_FILE: &str = "host_alt_irk";
 /// Where `ifconfig en0 > ifconfig.txt` leaves the address for us.
 const IFCONFIG_FILE: &str = "ifconfig.txt";
 const INSTALL: &str =
-    "wget -qO- https://raw.githubusercontent.com/FrizzleM/SideInstaller/main/minis/install.sh | sh";
+    "wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh";
 
 struct Args {
     ip: [u8; 4],

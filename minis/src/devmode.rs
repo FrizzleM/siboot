@@ -1,6 +1,6 @@
 //! `siboot developer-mode`: shows Developer Mode under Settings › Privacy &
 //! Security, or turns it on, as SideInstaller's Settings › Developer Mode does
-//! (`Engine.requestDeveloperMode` in ../ios-app): inside the tunnel, lockdownd
+//! (`Engine.requestDeveloperMode` in ../SideInstaller/ios-app): inside the tunnel, lockdownd
 //! says whether it's on (`DeveloperModeStatus` in `com.apple.security.mac.amfi`),
 //! and AMFI's RSD shim (`com.apple.amfi.lockdown.shim.remote`) takes the
 //! request, action 0 to show the switch or 1 to turn it on.

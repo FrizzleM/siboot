@@ -12,7 +12,7 @@ connected, and siboot-pair in rootshell paired and still running
 ([`../rootshell`](../rootshell#running-it)). Then, in Open Minis's terminal:
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/FrizzleM/SideInstaller/main/minis/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
 ```
 
 The first time, type the transfer code rootshell shows; after that siboot uses
@@ -54,7 +54,7 @@ siboot developer-mode
 ```
 
 Before siboot is installed, the same is
-`wget -qO- https://raw.githubusercontent.com/FrizzleM/SideInstaller/main/minis/install.sh | sh -s developer-mode`.
+`wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh -s developer-mode`.
 
 It works as SideInstaller's Settings › Developer Mode does. siboot opens the
 install's tunnel (steps 1–3, without the internet checks), and lockdownd says
@@ -76,6 +76,12 @@ iOS 27 still answers on its pairing port with Developer Mode off hasn't been
 tried.
 
 ## Building
+
+siboot compiles SideInstaller's vendored idevice, isideload and
+apple-codesign-quick, and rust-core's `apple_session.rs` and `error_text.rs`,
+from the [`SideInstaller`](../SideInstaller) submodule, pinned to one commit, so
+check it out first: `git clone --recursive`, or `git submodule update --init` in
+a clone you already have.
 
 Any aarch64 Linux with a musl toolchain builds it; on a Mac, a Lima Alpine VM
 does (`limactl create --name=siboot template:alpine`, then

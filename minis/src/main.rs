@@ -31,10 +31,10 @@ mod ui;
 // exactly as SideInstaller does (anisette identity rules, -80046 skip, token
 // reuse). `crate::error_text` is the path it expects.
 #[allow(dead_code)]
-#[path = "../../rust-core/src/apple_session.rs"]
+#[path = "../../SideInstaller/rust-core/src/apple_session.rs"]
 mod apple_session;
 #[allow(dead_code)]
-#[path = "../../rust-core/src/error_text.rs"]
+#[path = "../../SideInstaller/rust-core/src/error_text.rs"]
 mod error_text;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};

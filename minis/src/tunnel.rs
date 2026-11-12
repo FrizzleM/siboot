@@ -1,5 +1,5 @@
 //! Step 3: the tunnel, opened the way SideInstaller opens it
-//! (`tunnel_create_rppairing_multihost` in ../rust-core/vendor/idevice-ffi):
+//! (`tunnel_create_rppairing_multihost` in ../SideInstaller/rust-core/vendor/idevice-ffi):
 //!
 //! ```text
 //! 10.7.0.1:49152 (RPPairing) → pair-verify → createListener

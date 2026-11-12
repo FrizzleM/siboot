@@ -37,7 +37,7 @@ const ANSWER_WAIT: Duration = Duration::from_secs(20);
 /// How to make the pairing, for when there's none to take.
 pub const ROOTSHELL_ROUTE: &str = "Pair in rootshell (App Store) first: turn on its Settings › \
      Location Diary Mode › Session Only, then run in its local shell, one line at a time: \
-     `curl -fsSLO https://raw.githubusercontent.com/FrizzleM/SideInstaller/main/rootshell/bin/siboot-pair.wasm`, \
+     `curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/main/rootshell/bin/siboot-pair.wasm`, \
      `ifconfig en0 > ifconfig.txt`, `./siboot-pair.wasm`. Once it has paired, leave it running \
      and run siboot here again: it asks for the transfer code rootshell shows.";
 

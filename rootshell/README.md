@@ -15,7 +15,7 @@ its local shell, one line at a time (rootshell doesn't run them joined with
 `&&`):
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/FrizzleM/SideInstaller/main/rootshell/bin/siboot-pair.wasm
+curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/main/rootshell/bin/siboot-pair.wasm
 ifconfig en0 > ifconfig.txt
 ./siboot-pair.wasm
 ```
@@ -26,7 +26,7 @@ siboot-pair shows (it also arrives as a notification). Leave rootshell running,
 and in Open Minis's terminal run:
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/FrizzleM/SideInstaller/main/minis/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
 ```
 
 The first time, siboot asks for the transfer code siboot-pair shows and takes
@@ -61,6 +61,9 @@ Preview 1 programs, and lends them sockets (`rootshell_socket_*`).
    the iPhone from taking the file: five wrong ones end the offer.
 
 ## Building
+
+idevice comes from the [`SideInstaller`](../SideInstaller) submodule, so check
+it out first (`git clone --recursive`, or `git submodule update --init`):
 
 ```sh
 rustup target add wasm32-wasip1
