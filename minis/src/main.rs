@@ -22,6 +22,7 @@ mod fail;
 mod install;
 mod pairing;
 mod preflight;
+mod report;
 mod seed;
 mod sign;
 mod tunnel;
@@ -312,13 +313,14 @@ fn main() -> ExitCode {
     let outcome = runtime.block_on(async {
         tokio::select! {
             outcome = pipeline(&args) => outcome,
-            _ = tokio::signal::ctrl_c() => Err(Fail::new("Stopped with Ctrl-C.", "")),
+            _ = tokio::signal::ctrl_c() => Err(Fail::by_user("Stopped with Ctrl-C.")),
         }
     });
     let code = match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(f) => {
             ui::failure(&f.advice, &f.raw);
+            report::after_failure(&args, &f);
             ExitCode::FAILURE
         }
     };
@@ -327,7 +329,9 @@ fn main() -> ExitCode {
 }
 
 /// idevice's and isideload's own logs go to stderr: warnings by default, and
-/// everything they say with `--verbose`.
+/// everything they say with `--verbose`. The run's log (`report.rs`) keeps
+/// what they say at info and above either way: debug can carry what Apple
+/// and the anisette server send.
 ///
 /// hyper-util warns on every connection that the socket refused
 /// `TCP_USER_TIMEOUT`, which iSH doesn't implement; the connection is fine, so
@@ -345,15 +349,36 @@ fn init_logging(verbose: bool) {
             .with_writer(ui::LogLines)
             .with_ansi(false)
             .with_target(false)
-            .without_time();
-        let _ = tracing_subscriber::registry().with(fmt).with(filter).try_init();
+            .without_time()
+            .with_filter(filter);
+        let _ = tracing_subscriber::registry().with(fmt).with(record_layer()).try_init();
     } else {
         let fmt = tracing_subscriber::fmt::layer()
             .with_writer(std::io::stderr)
             .with_target(verbose)
-            .without_time();
-        let _ = tracing_subscriber::registry().with(fmt).with(filter).try_init();
+            .without_time()
+            .with_filter(filter);
+        let _ = tracing_subscriber::registry().with(fmt).with(record_layer()).try_init();
     }
+}
+
+/// The libraries' lines at info and above, into the run's log.
+fn record_layer<S>() -> impl tracing_subscriber::Layer<S>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    use tracing_subscriber::filter::{LevelFilter, Targets};
+    use tracing_subscriber::Layer as _;
+
+    let kept = Targets::new()
+        .with_default(LevelFilter::INFO)
+        .with_target("hyper_util", LevelFilter::ERROR);
+    tracing_subscriber::fmt::layer()
+        .with_writer(ui::RecordLines)
+        .with_ansi(false)
+        .with_target(true)
+        .without_time()
+        .with_filter(kept)
 }
 
 async fn pipeline(args: &Args) -> Result<()> {

@@ -80,7 +80,7 @@ pub fn unreachable_note(f: Fail) -> Fail {
     if !f.advice.contains("Developer Mode") {
         advice.push_str(" If Developer Mode is under Settings › Privacy & Security, turn it on there instead.");
     }
-    Fail { advice, raw: f.raw }
+    Fail { advice, ..f }
 }
 
 /// Ask for `request`. `confirm` is asked before anything that restarts the

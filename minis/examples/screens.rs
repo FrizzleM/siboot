@@ -8,6 +8,9 @@
 //! cargo run --example screens -- --plain       # the same, as plain lines
 //! ```
 //!
+//! A run that stops at Connect then asks whether to copy the log, as siboot
+//! does; on a Mac, yes puts it on the clipboard with `pbcopy`.
+//!
 //! The codes it asks for are 481516 (transfer) and 123456 (Apple's).
 
 #![allow(dead_code)]
@@ -27,7 +30,28 @@ fn main() {
     let has = |flag: &str| args.iter().any(|a| a == flag);
     ui::init(false, has("--plain"));
     let devmode = has("developer-mode");
-    let code = if run(devmode, has("stop")) { 0 } else { 1 };
+    let stop = has("stop");
+    let code = if run(devmode, stop) { 0 } else { 1 };
+    if stop && ui::confirm("copy the log to the clipboard?", true) {
+        let log = ui::recorded().join("\n");
+        let copied = std::process::Command::new("pbcopy")
+            .env("LANG", "en_US.UTF-8")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                use std::io::Write as _;
+                child.stdin.take().map(|mut i| i.write_all(log.as_bytes()));
+                child.wait()
+            });
+        match copied {
+            Ok(status) if status.success() => ui::ok(&format!(
+                "Copied the log ({} lines). Paste it where you ask for help.",
+                log.lines().count()
+            )),
+            _ => ui::warn("Couldn't copy the log: there's no pbcopy here."),
+        }
+        ui::note("It's also in ~/.siboot/siboot.log.");
+    }
     ui::close();
     std::process::exit(code);
 }
@@ -37,10 +61,10 @@ fn run(devmode: bool, stop: bool) -> bool {
         "Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover",
     ];
     if devmode {
-        ui::header("0.15.0", "Shows Developer Mode, or turns it on.");
+        ui::header("0.16.0", "Shows Developer Mode, or turns it on.");
         ui::plan(&["Check", "Pairing", "Connect", "Dev Mode"], 4);
     } else {
-        ui::header("0.15.0", "Installs SideInstaller on this iPhone.");
+        ui::header("0.16.0", "Installs SideInstaller on this iPhone.");
         ui::plan(&steps, 7);
     }
 

@@ -42,6 +42,14 @@ the program is awake, during the announcement. Lines are wrapped for an iPhone
 upright, about 40 columns, or to `COLUMNS` when it's set. `--plain` prints plain
 lines instead.
 
+When it stops on a problem, siboot-pair asks **Copy the log to the clipboard?
+y/n**: type `y` (or nothing) and return. A WASM program can't run a command, so
+the copy is OSC 52, which rootshell's terminal (Ghostty) puts on the clipboard;
+nothing tells siboot-pair whether it did, so the log is also saved as
+`siboot-pair.log` in rootshell's folder (Files › rootshell). The log is the
+lines it showed, plainly, without the codes. It has no times: reading the clock
+would add a WASI import 0.3.0's module doesn't have.
+
 ## How it works
 
 iOS 27 lists a host under Settings › Privacy & Security › Developer Mode ›
@@ -95,7 +103,8 @@ pair-setup against it: the handshake, SRP M1–M6 with the code, and its identit
 in M5, checking the host's M6 signature. They cover a pairing and the file it
 leaves, a mistyped code, three wrong codes, a connection that drops before the
 code, the hand-off (the file only for the right code, five wrong ones ending the
-offer), the announcement's records and the address out of `ifconfig` output.
+offer), the announcement's records, the address out of `ifconfig` output, and
+the log (no codes in it) and its base64 for OSC 52.
 
 ## What's been tested
 
@@ -114,3 +123,9 @@ offer), the announcement's records and the address out of `ifconfig` output.
   stand-in for siboot's side: a stray connection, the pairing, a wrong transfer
   code, the hand-off. Its `.wasm` imports the same functions as 0.2.1's. Not yet
   run on an iPhone.
+- **0.4.0** is 0.3.0 with the log above, offered when it stops; pairing and the
+  hand-off are unchanged. Tested with `cargo test` on a Mac (16 tests), and the
+  host build in a 40-column terminal, stopped on a port in use: the question,
+  the OSC 52 sequence (decoded back to the log) and the file. Its `.wasm`
+  imports the same functions as 0.3.0's. Not yet run on an iPhone, so whether
+  rootshell copies OSC 52 from a local program is untested.

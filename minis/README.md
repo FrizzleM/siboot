@@ -52,6 +52,23 @@ event, as before. `cargo run --example screens` plays the screen through a
 made-up run, on a Mac and without an iPhone (`-- stop`, `-- developer-mode` and
 `-- --plain` for the others).
 
+## When it stops
+
+When a run stops on a problem (not when you stop it: Ctrl-C, nothing typed, a
+cancelled sign-in), siboot asks **Copy the log to the clipboard?** under the
+box: `y` or return copies it, `n` doesn't. The log is what the screen showed,
+as plain lines with the time since the start, the answers to its questions
+(only that something was typed: never a password or a code), idevice's and
+isideload's own lines at info and above (not debug: that can carry what Apple
+and the anisette server send) and the underlying error `--verbose` would show.
+The Apple Account's email is cut to its first letter and domain, and long runs
+of hex digits (the UDID, anisette identities) to their ends.
+
+It's copied with Open Minis's own `apple-clipboard set`, which reads it on stdin
+(Minis's terminal ignores OSC 52), and saved to `~/.siboot/siboot.log` either
+way. Without a terminal on both ends siboot doesn't ask, and only says where the
+file is.
+
 ## The steps
 
 | # | Step | How |
@@ -129,7 +146,8 @@ its progress bar).
 
 `cargo test` runs on any host (macOS included): the screen's pieces (widths,
 cutting and wrapping, keys as the terminal sends them, code boxes, the progress
-bar, boxes), the hand-off from rootshell
+bar, boxes), the log's cleaning (emails, UDIDs, options without their values),
+the hand-off from rootshell
 against a stand-in for siboot-pair's side (the right code, a mistyped one, three
 wrong ones, something that isn't a pairing file, nothing offered), argument
 parsing, `developer-mode` against stand-ins for lockdownd and AMFI (on already,
@@ -170,6 +188,13 @@ tests, with a fake iPhone, are in
   transfer code and the menu of other ways to get Apple's code, a stop, Developer
   Mode's yes or no, and `--plain`; `install.sh`'s bar in Alpine. Not run on an
   iPhone yet, so not in Minis's own terminal.
+
+- **0.16.0** is 0.15.0 with the log above, offered when a run stops; the steps
+  are unchanged. Tested on macOS and Alpine aarch64 (57 tests), and through
+  `examples/screens.rs -- stop` in a 46-column terminal, where the copy goes
+  through `pbcopy`. Not run on an iPhone yet, so `apple-clipboard` hasn't been
+  called from siboot: its use follows Open Minis's source
+  (`src/ios/NativeOffloads/ClipboardOffload.m`).
 
 Not tested yet: other iPhones and iOS versions, an Apple Account at its
 certificate or App ID limit (siboot then asks which certificate to revoke), and

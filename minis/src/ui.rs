@@ -84,6 +84,9 @@ struct Ui {
     plain_open: bool,
     plain_label: String,
     plain_percent: Option<u64>,
+    /// The stop box is on screen (the run failed): Ctrl-C at the question
+    /// after it only leaves.
+    stopped: bool,
 }
 
 struct Bar {
@@ -112,8 +115,100 @@ fn flush() {
     let _ = io::stdout().flush();
 }
 
+// ---------------------------------------------------------------- the log
+
+/// Everything the run showed, as plain lines stamped with the time since it
+/// started, and the libraries' own log lines: the log siboot offers to copy
+/// when it stops (`report.rs`).
+struct Record {
+    lines: Vec<String>,
+    /// The last line kept, so a status shown again isn't.
+    last: String,
+    /// Lines let go from the middle, past `RECORD_MAX`.
+    dropped: usize,
+}
+
+static RECORD: Mutex<Record> = Mutex::new(Record {
+    lines: Vec::new(),
+    last: String::new(),
+    dropped: 0,
+});
+static STARTED: OnceLock<Instant> = OnceLock::new();
+/// Lines kept: past it, the oldest after `RECORD_HEAD` go, so the log keeps
+/// how the run started and how it ended.
+const RECORD_MAX: usize = 4000;
+const RECORD_HEAD: usize = 200;
+
+fn record_lock() -> MutexGuard<'static, Record> {
+    RECORD.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Keep `text` in the run's log, one entry per line of it.
+pub fn record(text: &str) {
+    let secs = STARTED.get_or_init(Instant::now).elapsed().as_secs();
+    let stamp = format!("{:02}:{:02}", secs / 60, secs % 60);
+    let mut r = record_lock();
+    for line in text.lines() {
+        let line = line.trim_end();
+        if line.trim().is_empty() || line == r.last {
+            continue;
+        }
+        r.last = line.to_string();
+        if r.lines.len() >= RECORD_MAX {
+            r.lines.remove(RECORD_HEAD);
+            r.dropped += 1;
+        }
+        r.lines.push(format!("{stamp} {line}"));
+    }
+}
+
+/// The run's log so far.
+pub fn recorded() -> Vec<String> {
+    let r = record_lock();
+    let mut lines = r.lines.clone();
+    if r.dropped > 0 {
+        let at = RECORD_HEAD.min(lines.len());
+        lines.insert(at, format!("      … {} lines left out …", r.dropped));
+    }
+    lines
+}
+
+/// tracing's output into the run's log, whatever the screen shows of it.
+pub struct RecordLines;
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RecordLines {
+    type Writer = RecordLine;
+
+    fn make_writer(&'a self) -> RecordLine {
+        RecordLine(Vec::new())
+    }
+}
+
+pub struct RecordLine(Vec<u8>);
+
+impl Write for RecordLine {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for RecordLine {
+    fn drop(&mut self) {
+        let text = String::from_utf8_lossy(&self.0);
+        for line in text.lines() {
+            record(&format!("   log {}", line.trim()));
+        }
+    }
+}
+
 /// Chooses the live screen or plain lines. Called once, before any output.
 pub fn init(verbose: bool, plain: bool) {
+    STARTED.get_or_init(Instant::now);
     let tty = io::stdout().is_terminal();
     let live = tty
         && io::stdin().is_terminal()
@@ -155,6 +250,7 @@ fn tick() {
 /// The name, version and what this run does, with the one thing to keep in
 /// mind while it runs.
 pub fn header(version: &str, tagline: &str) {
+    record(&format!("siboot {version} — {tagline}"));
     let mut ui = ui();
     let note = "Keep Minis open until siboot is done: iOS pauses it in the background.";
     if ui.mode != Mode::Live {
@@ -205,6 +301,7 @@ pub fn plan(names: &[&'static str], total: usize) {
 /// Step `n` (from 1) starts: `title` says what it does.
 pub fn step(n: usize, title: &str) {
     let mut ui = ui();
+    record(&format!("[{n}/{}] {title}", ui.total));
     if ui.mode != Mode::Live {
         ui.end_plain_line();
         println!();
@@ -226,6 +323,7 @@ pub fn step(n: usize, title: &str) {
 
 /// The running step is done: `summary` stays on its line.
 pub fn done(summary: &str) {
+    record(&format!("    ✓ {summary}"));
     let mut ui = ui();
     if ui.mode == Mode::Live {
         let above = ui.settle("✓", GOOD, summary);
@@ -235,6 +333,7 @@ pub fn done(summary: &str) {
 
 /// What the running step is doing now. Plain output prints it.
 pub fn status(msg: &str) {
+    record(&format!("      {msg}"));
     let mut ui = ui();
     match ui.mode {
         Mode::Live if ui.active.is_some() => {
@@ -261,6 +360,7 @@ pub fn activity(msg: &str) {
 
 /// Something that worked.
 pub fn ok(msg: &str) {
+    record(&format!("   OK {msg}"));
     let mut ui = ui();
     match ui.mode {
         Mode::Live if ui.active.is_some() => {
@@ -287,6 +387,7 @@ pub fn ok(msg: &str) {
 
 /// Information that stays on screen.
 pub fn note(msg: &str) {
+    record(&format!("      {msg}"));
     let mut ui = ui();
     if ui.mode == Mode::Live {
         let lines = ui.note_lines(DIM, msg);
@@ -297,6 +398,7 @@ pub fn note(msg: &str) {
 }
 
 pub fn warn(msg: &str) {
+    record(&format!("   !! {msg}"));
     let mut ui = ui();
     if ui.mode == Mode::Live {
         let max = line_width();
@@ -316,6 +418,7 @@ pub fn warn(msg: &str) {
 
 /// Useful only when diagnosing. Shown with `--verbose`, which is plain.
 pub fn detail(msg: &str) {
+    record(&format!("   ·· {msg}"));
     let mut ui = ui();
     if ui.verbose && ui.mode != Mode::Live {
         let line = format!("{INDENT}{} {msg}", ui.style(DIM, "··"));
@@ -386,6 +489,7 @@ pub fn progress_end() {
 
 /// The run worked: `title` and `paragraphs`, in a box.
 pub fn finish(title: &str, paragraphs: &[&str]) {
+    record(&format!("Done: {title}"));
     let mut ui = ui();
     if ui.mode != Mode::Live {
         ui.end_plain_line();
@@ -424,8 +528,14 @@ pub fn finish(title: &str, paragraphs: &[&str]) {
     ui.close();
 }
 
-/// Report a failure: the advice always, the raw cause with `--verbose`.
+/// Report a failure: the advice always, the raw cause with `--verbose` (and
+/// in the log). The live screen stays open for one more question: `close`
+/// ends it.
 pub fn failure(advice: &str, raw: &str) {
+    record(&format!("Stopped: {advice}"));
+    if !raw.is_empty() {
+        record(&format!("   cause: {raw}"));
+    }
     let mut ui = ui();
     if ui.mode != Mode::Live {
         ui.end_plain_line();
@@ -445,7 +555,7 @@ pub fn failure(advice: &str, raw: &str) {
     }
     let above = ui.stopped(advice, !raw.is_empty());
     ui.paint(&above);
-    ui.close();
+    ui.stopped = true;
 }
 
 /// Leave the terminal as it was. Safe to call more than once.
@@ -460,15 +570,25 @@ pub fn close() {
 /// in plain output. None when the user stops (Esc, or the end of input).
 pub fn ask_text(question: &str, label: &str, placeholder: &str, plain: &str) -> Option<String> {
     if !is_live() {
-        return ask(plain);
+        let answer = ask(plain);
+        record_answer(question, answer.as_ref().map(|_| "(typed)"));
+        return answer;
     }
     let saved = swap_status(question);
     let asked = field(label, placeholder, false);
     swap_status(&saved);
-    match asked {
+    let answer = match asked {
         Asked::Answer(value) => value,
         Asked::NoKeys => ask(plain),
-    }
+    };
+    record_answer(question, answer.as_ref().map(|_| "(typed)"));
+    answer
+}
+
+/// A prompt in the log: what it asked and, never what was typed, only
+/// whether something was.
+fn record_answer(question: &str, said: Option<&str>) {
+    record(&format!("   ?  {} › {}", capitalized(question), said.unwrap_or("(stopped)")));
 }
 
 /// Like `ask_text`, shown as dots.
@@ -478,32 +598,42 @@ pub fn ask_secret(
     placeholder: &str,
     plain: &str,
 ) -> io::Result<Option<String>> {
-    if !is_live() {
-        return rpassword::prompt_password(format!("{INDENT}{plain}")).map(Some);
-    }
-    let saved = swap_status(question);
-    let asked = field(label, placeholder, true);
-    swap_status(&saved);
-    match asked {
-        Asked::Answer(value) => Ok(value),
-        Asked::NoKeys => rpassword::prompt_password(format!("{INDENT}{plain}")).map(Some),
-    }
+    let answer = if is_live() {
+        let saved = swap_status(question);
+        let asked = field(label, placeholder, true);
+        swap_status(&saved);
+        match asked {
+            Asked::Answer(value) => Ok(value),
+            Asked::NoKeys => rpassword::prompt_password(format!("{INDENT}{plain}")).map(Some),
+        }
+    } else {
+        rpassword::prompt_password(format!("{INDENT}{plain}")).map(Some)
+    };
+    let said = match &answer {
+        Ok(Some(p)) if !p.is_empty() => Some("(hidden)"),
+        _ => None,
+    };
+    record_answer(question, said);
+    answer
 }
 
 /// A six-digit code, in boxes that fill as it's typed (the sixth digit sends
 /// it), while the running step shows `question`; `hint` goes under the boxes.
 pub fn ask_code(question: &str, label: &str, hint: &str, plain: &str) -> Option<String> {
-    if !is_live() {
-        return ask(plain);
-    }
-    let saved = swap_status(question);
-    let asked = code(label, &[Hint::Plain(hint.to_string())], false);
-    swap_status(&saved);
-    match asked {
-        Asked::Answer(CodeAnswer::Code(digits)) => Some(digits),
-        Asked::Answer(_) => None,
-        Asked::NoKeys => ask(plain),
-    }
+    let answer = if is_live() {
+        let saved = swap_status(question);
+        let asked = code(label, &[Hint::Plain(hint.to_string())], false);
+        swap_status(&saved);
+        match asked {
+            Asked::Answer(CodeAnswer::Code(digits)) => Some(digits),
+            Asked::Answer(_) => None,
+            Asked::NoKeys => ask(plain),
+        }
+    } else {
+        ask(plain)
+    };
+    record_answer(question, answer.as_ref().map(|_| "(a code)"));
+    answer
 }
 
 /// A line under the code boxes.
@@ -533,12 +663,25 @@ pub fn ask_code_or_more(question: &str, label: &str, hints: &[Hint]) -> Option<C
         Asked::NoKeys => None,
     };
     swap_status(&saved);
+    match &answer {
+        Some(CodeAnswer::Code(_)) => record_answer(question, Some("(a code)")),
+        Some(CodeAnswer::More) => record_answer(question, Some("other ways")),
+        Some(CodeAnswer::Cancel) => record_answer(question, None),
+        None => {}
+    }
     answer
 }
 
 /// A yes or no: `y` and `n` answer at once, the arrows move, return takes
-/// the highlighted one, which starts as `default`.
+/// the highlighted one, which starts as `default`. With no step running (the
+/// run has stopped), the question goes above the choice.
 pub fn confirm(question: &str, default: bool) -> bool {
+    let answer = confirm_prompt(question, default);
+    record_answer(question, Some(if answer { "Yes" } else { "No" }));
+    answer
+}
+
+fn confirm_prompt(question: &str, default: bool) -> bool {
     if !is_live() {
         let hint = if default { "[Y/n]" } else { "[y/N]" };
         return match ask(&format!("{} {hint} ", capitalized(question))) {
@@ -551,16 +694,28 @@ pub fn confirm(question: &str, default: bool) -> bool {
     let Some(mut keys) = term::Keys::open() else {
         degrade();
         swap_status(&saved);
-        return confirm(question, default);
+        return confirm_prompt(question, default);
     };
     let mut yes = default;
     let answer = loop {
         {
             let mut ui = ui();
-            let mut line = rail().add(NONE, " ".repeat(NAME_WIDTH));
+            let mut lines = Vec::new();
+            let mut line = if ui.active.is_some() {
+                rail().add(NONE, " ".repeat(NAME_WIDTH))
+            } else {
+                lines.push(
+                    Line::new()
+                        .add(NONE, "  ")
+                        .add(STRONG, "◆ ")
+                        .add(BOLD, capitalized(question)),
+                );
+                Line::new().add(NONE, "    ")
+            };
             line = choice(line, "Yes", yes).add(NONE, "   ");
             line = choice(line, "No", !yes).add(DIM, "   y/n");
-            ui.show_dialog(vec![line], None);
+            lines.push(line);
+            ui.show_dialog(lines, None);
         }
         match keys.next() {
             Key::Char('y' | 'Y') => break true,
@@ -593,6 +748,12 @@ pub fn confirm(question: &str, default: bool) -> bool {
 /// One of `options`, while the running step shows `title`: the arrows move,
 /// a digit or return picks. None when the user backs out (Esc).
 pub fn choose(title: &str, options: &[String]) -> Option<usize> {
+    let picked = choose_prompt(title, options);
+    record_answer(title, picked.and_then(|i| options.get(i)).map(String::as_str));
+    picked
+}
+
+fn choose_prompt(title: &str, options: &[String]) -> Option<usize> {
     if options.is_empty() {
         return None;
     }
@@ -613,7 +774,7 @@ pub fn choose(title: &str, options: &[String]) -> Option<usize> {
     let Some(mut keys) = term::Keys::open() else {
         degrade();
         swap_status(&saved);
-        return choose(title, options);
+        return choose_prompt(title, options);
     };
     let mut at = 0;
     let picked = loop {
@@ -854,7 +1015,12 @@ fn interrupt() -> ! {
     {
         let mut ui = ui();
         if ui.mode == Mode::Live {
-            let above = ui.stopped("Stopped with Ctrl-C.", false);
+            let above = if ui.stopped {
+                ui.dialog = None;
+                Vec::new()
+            } else {
+                ui.stopped("Stopped with Ctrl-C.", false)
+            };
             ui.paint(&above);
         }
         ui.close();
@@ -916,6 +1082,7 @@ impl Ui {
             plain_open: false,
             plain_label: String::new(),
             plain_percent: None,
+            stopped: false,
         }
     }
 

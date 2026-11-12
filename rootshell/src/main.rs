@@ -150,11 +150,38 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(problem) => {
             ui::stopped(&problem);
+            offer_log();
             ExitCode::FAILURE
         }
     };
     ui::end();
     code
+}
+
+/// Where the log of a run that stopped goes, next to the pairing file.
+const LOG_FILE: &str = "siboot-pair.log";
+
+/// After a failure: save the log, and ask whether to copy it (return alone
+/// says yes).
+fn offer_log() {
+    if cfg!(test) {
+        return;
+    }
+    let log = ui::recorded().join("\n") + "\n";
+    let saved = std::fs::write(LOG_FILE, &log).is_ok();
+    let place = format!("Files › rootshell › {LOG_FILE}");
+    ui::blank();
+    let answer = ui::ask("Copy the log to the clipboard?", "y/n");
+    match answer.as_deref().map(str::to_ascii_lowercase).as_deref() {
+        Some("" | "y" | "yes") => {
+            ui::copy(&log);
+            let lines = log.lines().count();
+            let also = if saved { format!(" If it doesn't paste, it's in {place}.") } else { String::new() };
+            ui::say(ui::Mark::Good, &format!("Copied the log ({lines} lines).{also}"));
+        }
+        _ if saved => ui::dim(&format!("The log is in {place}.")),
+        _ => {}
+    }
 }
 
 fn run(args: &Args) -> Result<(), String> {

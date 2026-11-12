@@ -60,7 +60,7 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
     };
     let apple_id = apple_id.trim().to_string();
     if apple_id.is_empty() {
-        return Err(Fail::new("No Apple Account given.", ""));
+        return Err(Fail::by_user("No Apple Account given."));
     }
     let password = match std::env::var("SIBOOT_PASSWORD") {
         Ok(p) if !p.is_empty() => p,
@@ -79,7 +79,7 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
         .unwrap_or_default(),
     };
     if password.is_empty() {
-        return Err(Fail::new("No password given.", ""));
+        return Err(Fail::by_user("No password given."));
     }
 
     let storage = args.home.join("isideload");
@@ -128,7 +128,9 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
             }
             Err(e) => {
                 if let Some(advice) = stops_sign_in(&e) {
-                    return Err(Fail::new(advice, e));
+                    let mut f = Fail::new(advice, e);
+                    f.by_user = advice == CANCELLED;
+                    return Err(f);
                 }
                 ui::warn(&format!(
                     "{} didn't work: {}",
@@ -179,6 +181,9 @@ fn remember_server(home: &Path, server: &str) {
     let _ = std::fs::write(last_server_path(home), server);
 }
 
+/// The user said no to every way of getting the code: not a problem to log.
+const CANCELLED: &str = "Sign-in cancelled.";
+
 /// Advice when another server can't help: the same account would meet the
 /// same answer, and retrying risks Apple locking it.
 fn stops_sign_in(error: &str) -> Option<&'static str> {
@@ -198,7 +203,7 @@ fn stops_sign_in(error: &str) -> Option<&'static str> {
         );
     }
     if error.contains("No 2FA") {
-        return Some("Sign-in cancelled.");
+        return Some(CANCELLED);
     }
     None
 }

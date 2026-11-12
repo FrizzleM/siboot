@@ -9,6 +9,9 @@ pub struct Fail {
     pub advice: String,
     /// The underlying protocol or library error. Shown with `--verbose`.
     pub raw: String,
+    /// The user stopped the run (Ctrl-C, nothing typed, a cancelled
+    /// sign-in): nothing went wrong, so siboot doesn't offer its log.
+    pub by_user: bool,
 }
 
 impl Fail {
@@ -16,6 +19,15 @@ impl Fail {
         Self {
             advice: advice.into(),
             raw: raw.into(),
+            by_user: false,
+        }
+    }
+
+    /// The user stopped here.
+    pub fn by_user(advice: impl Into<String>) -> Self {
+        Self {
+            by_user: true,
+            ..Self::new(advice, "")
         }
     }
 }

@@ -9,6 +9,10 @@
 //! notifications (OSC 777), which rootshell shows in the background too.
 //!
 //! Plain lines with `--plain` or TERM=dumb, and in the tests.
+//!
+//! What it shows is also kept as plain lines, the run's log, which it offers
+//! to copy when it stops: through OSC 52, which Ghostty puts on the
+//! clipboard (a WASM program can't run a command to do it).
 
 use std::io::Write as _;
 use std::sync::{Mutex, MutexGuard};
@@ -50,6 +54,37 @@ static SCREEN: Mutex<Screen> = Mutex::new(Screen {
     frame: 0,
     last: String::new(),
 });
+
+/// The run's log: each line shown, plainly. Without times: reading the clock
+/// would add a WASI import 0.3.0's module doesn't have.
+struct Record {
+    lines: Vec<String>,
+    last: String,
+}
+
+static RECORD: Mutex<Record> = Mutex::new(Record { lines: Vec::new(), last: String::new() });
+
+/// Keep `text` in the run's log, unless it repeats the line before.
+fn record(text: &str) {
+    let mut r = RECORD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    for line in text.lines() {
+        let line = line.trim_end();
+        if line.trim().is_empty() || line == r.last {
+            continue;
+        }
+        r.last = line.to_string();
+        // A run is a few dozen lines: a long one keeps its start and its end.
+        if r.lines.len() >= 2000 {
+            r.lines.remove(100);
+        }
+        r.lines.push(line.to_string());
+    }
+}
+
+/// The run's log so far.
+pub fn recorded() -> Vec<String> {
+    RECORD.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).lines.clone()
+}
 
 fn screen() -> MutexGuard<'static, Screen> {
     SCREEN
@@ -165,6 +200,7 @@ impl Screen {
 
 /// The name and version, and what it does.
 pub fn header(version: &str) {
+    record(&format!("siboot-pair {version} log"));
     let mut s = screen();
     let lines = if s.fancy {
         let mut lines = vec![
@@ -187,6 +223,7 @@ pub fn header(version: &str) {
 
 /// A line to keep in mind, marked.
 pub fn say(mark: Mark, text: &str) {
+    record(&format!("{} {text}", mark.word()));
     let mut s = screen();
     let lines = if s.fancy {
         let (glyph, style) = mark.glyph();
@@ -200,6 +237,7 @@ pub fn say(mark: Mark, text: &str) {
 
 /// A paragraph, wrapped; `style` is one of `heading`'s or `dim`'s.
 fn paragraph(style: &str, text: &str) {
+    record(&format!("   {text}"));
     let mut s = screen();
     let lines = if s.fancy {
         s.hanging("  ", 2, style, text)
@@ -223,6 +261,7 @@ pub fn dim(text: &str) {
 
 /// Step `n` of a list, its other lines indented under its text.
 pub fn numbered(n: usize, text: &str) {
+    record(&format!("   {n}. {text}"));
     let mut s = screen();
     let lines = if s.fancy {
         let lead = format!("  {} ", s.paint(STRONG, &format!("{n:>2}")));
@@ -235,6 +274,7 @@ pub fn numbered(n: usize, text: &str) {
 
 /// A command to type, on one line however long, so it copies whole.
 pub fn command(text: &str) {
+    record(&format!("     {text}"));
     let mut s = screen();
     let line = format!("    {}", s.paint(ACCENT, text));
     s.emit(&[line]);
@@ -246,12 +286,14 @@ pub fn blank() {
 
 /// The live line: what siboot-pair is waiting for now.
 pub fn live(text: &str) {
+    record(&format!(" … {text}"));
     screen().set_live("◆", STRONG, text);
 }
 
 /// The live line with a spinner, for `time`: it moves only while the program
 /// is awake, as it is between announcements.
 pub fn spin(text: &str, time: Duration) {
+    record(&format!(" … {text}"));
     let frames = (time.as_millis() / FRAME.as_millis()).max(1);
     for _ in 0..frames {
         {
@@ -290,6 +332,7 @@ pub fn end() {
 
 /// A failure: the live line, if any, becomes it.
 pub fn stopped(problem: &str) {
+    record(&format!("Stopped: {problem}"));
     let mut s = screen();
     if s.fancy && s.live.take().is_some() {
         print!("\r\x1b[2K");
@@ -308,6 +351,8 @@ pub fn stopped(problem: &str) {
 /// `code` in large digits, three groups of three apart, and plainly under
 /// them.
 pub fn big(code: &str) {
+    // Not the code itself: the log is meant to be pasted somewhere.
+    record("     (a 6-digit code, in large digits)");
     let mut s = screen();
     let spaced = spaced(code);
     if !s.fancy {
@@ -331,6 +376,60 @@ pub fn notify(title: &str, body: &str) {
     let clean = |t: &str| t.replace([';', '\x07', '\x1b'], " ");
     print!("\x1b]777;notify;{};{}\x07", clean(title), clean(body));
     let _ = std::io::stdout().flush();
+}
+
+/// A question answered with a line: a WASM program can't read keys one at a
+/// time. None at the end of input. `hint` follows it, dimmed: "y/n". The
+/// question, hint and answer fit 40 columns, or the answer would wrap.
+pub fn ask(question: &str, hint: &str) -> Option<String> {
+    let s = screen();
+    let prompt = if s.fancy {
+        format!("  {} {} {} ", s.paint(STRONG, "◆"), s.paint(BOLD, question), s.paint(DIM, hint))
+    } else {
+        format!("{question} [{hint}] ")
+    };
+    drop(s);
+    print!("{prompt}");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    match std::io::stdin().read_line(&mut line) {
+        Ok(0) | Err(_) => {
+            println!();
+            None
+        }
+        Ok(_) => {
+            let answer = line.trim().to_string();
+            record(&format!(" ?  {question} {answer}"));
+            Some(answer)
+        }
+    }
+}
+
+/// `text` onto the clipboard: OSC 52, which Ghostty, rootshell's terminal,
+/// takes as a copy. Nothing says whether it did.
+pub fn copy(text: &str) {
+    if cfg!(test) {
+        return;
+    }
+    print!("\x1b]52;c;{}\x07", base64(text.as_bytes()));
+    let _ = std::io::stdout().flush();
+}
+
+/// Standard base64, with padding, as OSC 52 takes it.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().enumerate().fold(0u32, |n, (i, b)| n | (*b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// "481 516".
@@ -450,6 +549,31 @@ fn wrap(text: &str, room: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base64_is_the_standard_one_with_padding() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64("Settings › Pair".as_bytes()), "U2V0dGluZ3Mg4oC6IFBhaXI=");
+    }
+
+    #[test]
+    fn the_log_keeps_lines_not_codes() {
+        // Other tests log too, into the same record: these lines are its own.
+        header("9.9.9");
+        live("Waiting for the log test…");
+        live("Waiting for the log test…");
+        big("975310");
+        stopped("the log test ended.");
+        let log = recorded().join("\n");
+        assert!(log.contains("siboot-pair 9.9.9 log"), "{log}");
+        assert_eq!(log.matches("Waiting for the log test").count(), 1, "{log}");
+        assert!(!log.contains("975310") && !log.contains("975 310"), "{log}");
+        assert!(log.contains("Stopped: the log test ended."), "{log}");
+    }
 
     #[test]
     fn big_digits_are_three_rows_of_even_width() {
