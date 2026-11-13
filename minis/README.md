@@ -15,15 +15,17 @@ connected, and siboot-pair in rootshell paired and still running
 wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
 ```
 
-The first time, type the transfer code rootshell shows; after that siboot uses
-the pairing file it saved and doesn't ask. Then type your Apple Account email,
-password and verification code. Keep Minis open until siboot says it's done:
-iOS pauses it in the background. The first time, trust your Apple Account in
-Settings › General › VPN & Device Management. Free accounts' apps last 7 days;
+siboot opens a page over the terminal, in Minis's own browser
+([below](#the-page)), that shows each step and asks its questions. The first
+time, enter the transfer code rootshell shows; after that siboot uses the
+pairing file it saved and doesn't ask. Then your Apple Account email, password
+and verification code. Keep Minis open until siboot says it's done: iOS pauses
+it in the background. The first time, trust your Apple Account in Settings ›
+General › VPN & Device Management. Free accounts' apps last 7 days;
 SideInstaller can renew itself from then on.
 
-To tap rather than type, add `-s -- --web` after `sh`: siboot then shows the run
-as a page in Minis's own browser ([below](#the-page---web)).
+To answer in the terminal instead, add `-s -- --terminal` after `sh` (or run
+`siboot --terminal` once it's installed).
 
 [`install.sh`](install.sh) downloads [`bin/siboot-aarch64`](bin) from this
 repository (a progress bar on one line while it does), checks it against the
@@ -33,7 +35,7 @@ again without downloading.
 
 ## The screen
 
-On Minis's terminal siboot keeps a small live area under what it has printed:
+With `--terminal`, siboot keeps a small live area under what it has printed:
 the steps of the run, the running one with a spinner, what it's doing and for
 how long, and a progress bar for the download, the upload and the install. A
 finished step stays as one line with what came of it, and a warning stays where
@@ -60,16 +62,11 @@ event, as before. `cargo run --example screens` plays the screen through a
 made-up run, on a Mac and without an iPhone (`-- stop`, `-- developer-mode` and
 `-- --plain` for the others).
 
-## The page (`--web`)
+## The page
 
-For whoever would rather tap than type, `--web` shows the run as a page in
-Open Minis's own browser:
-
-```sh
-wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh -s -- --web
-```
-
-siboot serves the page itself, on this iPhone's loopback, and opens it with
+In Open Minis siboot shows the run as a page in Minis's own browser, to tap
+rather than type (since 0.17.0; `--terminal` keeps it in the terminal, and
+`--web` serves the page even where there's no Minis). siboot serves the page itself, on this iPhone's loopback, and opens it with
 Minis's `minis-open`, which shows it in a sheet over the terminal. Minis stays
 in front, so iOS doesn't pause it. Safari wouldn't do: behind it, iOS pauses
 Minis within seconds, and a paused app takes the connection and never answers.
@@ -273,16 +270,16 @@ tests, with a fake iPhone, are in
   lowercase one, so it's kept. Tested on macOS and Alpine aarch64 (59 tests).
   Not signed in to Apple with a capitalized email yet.
 
-- **`--web`** (the page above, not released yet) leaves the steps unchanged.
-  Tested on macOS (71 tests), and through `examples/screens.rs -- --web` in a
+- **0.17.0** shows the run as the page above by default; the steps are
+  unchanged, and `--terminal` gives the terminal as before. Tested on macOS
+  (71 tests), and through `examples/screens.rs -- --web` in a
   browser at an iPhone's size: an install with a mistyped transfer code, Other
   ways for Apple's code and a mistyped one; a stop at Connect and the question
   about the log; Developer Mode's question and the page's Stop; a page reloaded
   mid-run; and the run paused with SIGSTOP, where the page said siboot wasn't
   answering until it was resumed. `siboot --web check` on a Mac stopped at the
-  iPhone, as it does there, and asked about the log on the page. Not built for
-  aarch64 or run in Minis yet, so `minis-open`'s sheet, and Minis's browser
-  reaching the shell's loopback, are untested.
+  iPhone, as it does there, and asked about the log on the page. A test build
+  with `--web` ran in Minis on an iPhone: the sheet opened and the page worked.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account at its
 certificate or App ID limit (siboot then asks which certificate to revoke), and

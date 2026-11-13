@@ -21,8 +21,8 @@
 //! TERM=dumb or SIBOOT_PLAIN set, and in the tests, the output is plain lines,
 //! one per event.
 //!
-//! With `--web`, every event also goes to a page in Open Minis's browser
-//! (`web.rs`), and the questions are asked there instead: fields, code boxes
+//! In Open Minis (and with `--web`), every event also goes to a page in
+//! Minis's browser (`web.rs`), and the questions are asked there instead: fields, code boxes
 //! and buttons. The terminal under it keeps the plain lines.
 
 use std::fmt::Write as _;

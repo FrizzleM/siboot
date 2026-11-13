@@ -1,5 +1,5 @@
-//! `--web`: the run as a page in Open Minis's own browser, for whoever would
-//! rather tap than type.
+//! The run as a page in Open Minis's own browser, to tap rather than type:
+//! the way siboot runs in Minis, unless it's given `--terminal`.
 //!
 //! siboot serves the page on this iPhone's loopback, at a port the system
 //! picks, under a path of 128 random bits (the key), and opens it with Minis's
@@ -133,6 +133,17 @@ pub fn wait_for_page(longest: Duration) -> bool {
             .unwrap_or_else(|e| e.into_inner().0);
     }
     true
+}
+
+/// Whether this is Open Minis, which has `minis-open` to show the page.
+pub fn available() -> bool {
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|dir| {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::metadata(dir.join("minis-open"))
+                .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        })
+    })
 }
 
 /// Opens `url` in Open Minis's browser, in a sheet over its terminal:

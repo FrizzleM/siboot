@@ -16,8 +16,9 @@
 //! and signing key are kept, in ~/.siboot/isideload, so a second run needn't
 //! sign in again.
 //!
-//! With `--web`, the run shows as a page in Open Minis's browser, served on
-//! this iPhone's loopback, and asks its questions there (web.rs).
+//! In Open Minis the run shows as a page in Minis's browser, served on this
+//! iPhone's loopback, and asks its questions there (web.rs); `--terminal`
+//! keeps it in the terminal.
 
 mod account;
 mod devmode;
@@ -84,8 +85,9 @@ pub struct Args {
     pub verbose: bool,
     /// Plain lines, not the live screen.
     pub plain: bool,
-    /// The run as a page in Open Minis's browser; plain lines on the terminal.
-    pub web: bool,
+    /// The run as a page in Open Minis's browser (`--web`), or in the terminal
+    /// (`--terminal`). Neither: the page where there's Minis to show it.
+    pub web: Option<bool>,
     pub device: SocketAddr,
     /// ~/.siboot: the pairing file, isideload's store, downloads.
     pub home: PathBuf,
@@ -120,7 +122,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> std::result::Result<Par
         turn_on: false,
         verbose: false,
         plain: false,
-        web: false,
+        web: None,
         device: SocketAddr::new(IpAddr::V4(DEFAULT_DEVICE_IP), DEFAULT_RP_PORT),
         home: default_home(),
         pairing_file: None,
@@ -137,7 +139,8 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> std::result::Result<Par
             "-V" | "--version" => return Ok(Parsed::Version),
             "-v" | "--verbose" => args.verbose = true,
             "--plain" => args.plain = true,
-            "--web" => args.web = true,
+            "--web" => args.web = Some(true),
+            "--terminal" => args.web = Some(false),
             "--device-ip" => {
                 let ip: IpAddr = value("--device-ip")?
                     .parse()
@@ -235,13 +238,15 @@ Open Minis, with your own Apple Account.
   {home}
       Where siboot keeps its files (default
       ~/.siboot).
+  {terminal}
+      Answer here in the terminal, not on the
+      page in Minis's browser.
   {plain}
-      Plain lines instead of the live screen.
+      Plain lines instead of the live screen
+      in the terminal.
   {web}
-      Show the run as a page in Minis's
-      browser, and answer its questions there.
-      The terminal keeps plain lines; return
-      opens the page again.
+      The page even outside Minis: siboot
+      prints its address.
   {verbose}
       Show the underlying protocol and library
       errors (plain lines, too).
@@ -270,6 +275,7 @@ Open Minis, with your own Apple Account.
         home = flag("--home DIR"),
         plain = flag("--plain"),
         web = flag("--web"),
+        terminal = flag("--terminal"),
         verbose = flag("-v, --verbose"),
         help = flag("-h, --help"),
         ip = DEFAULT_DEVICE_IP,
@@ -299,7 +305,7 @@ fn main() -> ExitCode {
     };
 
     // Served before anything is shown, so the page gets every event.
-    let page = if args.web {
+    let page = if args.web.unwrap_or_else(web::available) {
         match web::start() {
             Ok(url) => Some(url),
             Err(e) => {
@@ -374,6 +380,8 @@ fn show_page(url: &str) {
     if web::show(url) {
         println!("      The page is open in Minis's browser. Closed it?");
         println!("      Press return here to open it again.");
+        println!("      To type here instead, stop with Ctrl-C");
+        println!("      and run siboot --terminal.");
         let url = url.to_string();
         std::thread::spawn(move || {
             use std::io::BufRead;
@@ -624,9 +632,11 @@ mod tests {
         assert_eq!(parse("check").command, Command::Check);
         assert!(parse("--plain").plain);
         assert!(!parse("").plain);
-        assert!(parse("--web").web);
-        assert!(parse("developer-mode --web").web);
-        assert!(!parse("").web);
+        assert_eq!(parse("--web").web, Some(true));
+        assert_eq!(parse("developer-mode --web").web, Some(true));
+        assert_eq!(parse("--terminal").web, Some(false));
+        assert_eq!(parse("--plain").web, None);
+        assert_eq!(parse("").web, None);
     }
 
     #[test]
