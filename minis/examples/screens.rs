@@ -6,10 +6,15 @@
 //! cargo run --example screens -- stop          # one that stops at Connect
 //! cargo run --example screens -- developer-mode
 //! cargo run --example screens -- --plain       # the same, as plain lines
+//! cargo run --example screens -- --web         # the same, as the page
 //! ```
 //!
 //! A run that stops at Connect then asks whether to copy the log, as ssboot
 //! does; on a Mac, yes puts it on the clipboard with `pbcopy`.
+//!
+//! With `--web` the run is served as ssboot serves it, on the loopback, and
+//! its address printed; it starts once a browser has the page open, and the
+//! questions are answered there. `--open` opens it with macOS's `open`.
 //!
 //! The codes it asks for are 481516 (transfer) and 123456 (Apple's).
 
@@ -17,6 +22,8 @@
 
 #[path = "../src/ui.rs"]
 mod ui;
+#[path = "../src/web.rs"]
+mod web;
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -28,7 +35,20 @@ fn wait(ms: u64) {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
-    ui::init(false, has("--plain"));
+    let page = if has("--web") {
+        Some(web::start().expect("a loopback port for the page"))
+    } else {
+        None
+    };
+    ui::init(false, has("--plain") || page.is_some());
+    if let Some(url) = &page {
+        web::on_stop(|| ui::stop_now("Stopped from the page."));
+        println!("The page: {url}");
+        if has("--open") {
+            let _ = std::process::Command::new("open").arg(url).status();
+        }
+        web::wait_for_page(Duration::from_secs(600));
+    }
     let devmode = has("developer-mode");
     let stop = has("stop");
     let code = if run(devmode, stop) { 0 } else { 1 };
@@ -205,19 +225,16 @@ fn run(devmode: bool, stop: bool) -> bool {
     ui::warn("new.ani.sidestore.io didn't work: anisette server answered 503 Service Unavailable");
     ui::status("signing in through mac-ani.jkcoxson.com");
     wait(1200);
-    let mut hints = vec![
-        ui::Hint::Plain("sent to your Apple devices".into()),
-        ui::Hint::Plain("o: other ways · esc: cancel".into()),
-    ];
+    let mut hints = vec![ui::Hint::Plain("sent to your Apple devices".into())];
     loop {
         match ui::ask_code_or_more("enter the code Apple sent", "Code", &hints) {
             Some(ui::CodeAnswer::Code(code)) if code == "123456" => break,
             Some(ui::CodeAnswer::Code(_)) => {
+                hints.retain(|hint| !matches!(hint, ui::Hint::Warning(_)));
                 hints.insert(
                     0,
                     ui::Hint::Warning("Apple: Incorrect verification code.".into()),
                 );
-                hints.truncate(3);
             }
             Some(ui::CodeAnswer::More) => {
                 let ways = [
@@ -233,14 +250,11 @@ fn run(devmode: bool, stop: bool) -> bool {
                         return false;
                     }
                     Some(i) => {
-                        hints = vec![
-                            ui::Hint::Plain(match i {
-                                0 => "texted to +1 (•••) •••-••42".into(),
-                                1 => "Apple is calling +1 (•••) •••-••42".into(),
-                                _ => "sent to your Apple devices".into(),
-                            }),
-                            ui::Hint::Plain("o: other ways · esc: cancel".into()),
-                        ];
+                        hints = vec![ui::Hint::Plain(match i {
+                            0 => "texted to +1 (•••) •••-••42".into(),
+                            1 => "Apple is calling +1 (•••) •••-••42".into(),
+                            _ => "sent to your Apple devices".into(),
+                        })];
                         ui::status("asking Apple for a new code");
                         wait(900);
                     }
@@ -323,6 +337,7 @@ fn run(devmode: bool, stop: bool) -> bool {
     );
     ui::done("SideStore has the pairing");
 
+    ui::link("Open SideInstaller", "sideinstaller://");
     ui::finish(
         "SideStore is installed",
         &[

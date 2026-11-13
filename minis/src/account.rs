@@ -410,7 +410,7 @@ impl From<&TwoFactorCallbackParams> for Prompt {
 }
 
 fn ask_two_factor(prompt: &Prompt) -> TwoFactorCallbackResponse {
-    if ui::is_live() {
+    if ui::interactive() {
         if let Some(answer) = ask_two_factor_live(prompt) {
             return answer;
         }
@@ -482,7 +482,6 @@ fn ask_two_factor_live(prompt: &Prompt) -> Option<TwoFactorCallbackResponse> {
                 hints.push(ui::Hint::Warning(warning));
             }
             hints.push(ui::Hint::Plain(sent.clone()));
-            hints.push(ui::Hint::Plain("o: other ways · esc: cancel".into()));
             match ui::ask_code_or_more("enter the code Apple sent", "Code", &hints)? {
                 ui::CodeAnswer::Code(code) => {
                     return Some(TwoFactorCallbackResponse::SubmitCode(code))
@@ -572,7 +571,7 @@ fn parse_two_factor(line: &str) -> Option<TwoFactorCallbackResponse> {
 #[allow(clippy::ptr_arg)] // isideload's `MaxCertsBehavior::Prompt` takes a `&Vec`
 fn choose_certificates_to_revoke(certs: &Vec<DevelopmentCertificate>) -> Option<Vec<String>> {
     tokio::task::block_in_place(|| {
-        if !ui::is_live() {
+        if !ui::interactive() {
             return choose_certificates_plain(certs);
         }
         ui::warn(

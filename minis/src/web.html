@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark">
+<title>ssboot</title>
+<!--
+  ssboot's run, served by ssboot itself on this iPhone's loopback (src/web.rs)
+  and shown in Open Minis's browser. It reads the run as server-sent events
+  from `events`, answers ssboot's questions by POSTing to `answer`, and stops
+  it with `stop`. Every URL is relative: the page's own path carries the key
+  that lets it in.
+
+  The palette, radii and type are SideInstaller's (ios-app/Theme.swift), as on
+  sideinstaller.net. Text from ssboot only ever goes in through textContent.
+-->
+<style>
+:root{
+  --page:#0b0c0f; --card:#141518; --raised:#1c1e22;
+  --control:rgba(255,255,255,.06); --control-hover:rgba(255,255,255,.1);
+  --hairline:rgba(255,255,255,.08); --hairline-strong:rgba(255,255,255,.16);
+  --off-white:#edeef0; --text:#f2f3f5; --text-2:#a4a8b0; --muted:#80858d;
+  --accent:#2f80ff; --positive:#4cc38a; --warning:#e5a140; --negative:#e5484d;
+  --r-control:12px; --r-card:20px;
+  --ease:cubic-bezier(.22,1,.36,1); --fast:.15s; --mid:.3s;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,monospace;
+}
+*,*::before,*::after{box-sizing:border-box}
+[hidden]{display:none !important}
+html{color-scheme:dark; background:var(--page); -webkit-text-size-adjust:100%}
+body{margin:0; background:var(--page); color:var(--text); font:400 16px/1.45 var(--sans); -webkit-font-smoothing:antialiased}
+h1,h2,p,ol,ul{margin:0}
+ol,ul{padding:0; list-style:none}
+button,input{font:inherit; color:inherit}
+main{max-width:34rem; margin:0 auto; padding:max(20px,env(safe-area-inset-top)) 16px max(28px,env(safe-area-inset-bottom))}
+
+/* ---------- the head: name, what this run does, the one thing to keep in mind ---------- */
+
+.top{display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:32px}
+.brand{display:flex; align-items:center; gap:8px}
+.badge{padding:4px 10px; border-radius:999px; background:var(--off-white); color:var(--page); font-size:14px; font-weight:600; line-height:1}
+.version{font:400 13px/1 var(--mono); color:var(--muted)}
+.stop{height:32px; padding:0 14px; border:1px solid var(--hairline); border-radius:16px; background:var(--control); color:var(--text-2); font-size:14px; cursor:pointer; -webkit-tap-highlight-color:transparent}
+.stop.armed{color:var(--negative); border-color:rgba(229,72,77,.45)}
+.tagline{margin-top:20px; font-size:26px; line-height:1.15; font-weight:600; letter-spacing:-.02em}
+.keep{display:flex; gap:8px; margin-top:10px; font-size:15px; color:var(--text-2)}
+.keep::before{content:"▲"; flex:none; font-size:11px; line-height:22px; color:var(--warning)}
+.banner{margin-top:16px; padding:12px 14px; border-radius:var(--r-control); background:var(--control); font-size:15px; color:var(--text-2)}
+.banner[data-tone=warn]{background:rgba(229,161,64,.08); box-shadow:inset 0 0 0 1px rgba(229,161,64,.35); color:var(--text)}
+
+/* ---------- the steps ---------- */
+
+.steps{margin-top:24px; border-top:1px solid var(--hairline)}
+.step{padding:14px 0; border-bottom:1px solid var(--hairline)}
+.row{display:flex; align-items:center; gap:12px}
+.mark{flex:none; display:grid; place-items:center; width:20px; height:20px; border-radius:50%; box-shadow:inset 0 0 0 1.5px var(--hairline-strong); color:var(--page); font-size:12px; font-weight:700; line-height:1}
+.step[data-state=active] .mark{box-shadow:none; border:2px solid rgba(47,128,255,.25); border-top-color:var(--accent); animation:spin .8s linear infinite}
+.step[data-state=done] .mark{box-shadow:none; background:var(--positive)}
+.step[data-state=failed] .mark{box-shadow:none; background:var(--negative)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.name{flex:1; min-width:0; font-size:17px; font-weight:500}
+.step[data-state=pending] .name{color:var(--muted)}
+.time{font:400 13px/1 var(--mono); font-variant-numeric:tabular-nums; color:var(--muted)}
+.line{margin:4px 0 0 32px; font-size:15px; color:var(--text-2); overflow-wrap:anywhere}
+.line:empty{display:none}
+.step[data-state=failed] .line{color:var(--negative)}
+.progress{margin:10px 0 0 32px}
+.track{height:4px; border-radius:2px; background:var(--control-hover); overflow:hidden}
+.fill{width:0; height:100%; border-radius:inherit; background:var(--accent); transition:width var(--mid) var(--ease)}
+.progress-text{margin-top:6px; font:400 13px/1.4 var(--mono); font-variant-numeric:tabular-nums; color:var(--muted)}
+.items{margin:6px 0 0 32px}
+.items:empty{display:none}
+.item{display:flex; gap:8px; padding:3px 0; font-size:14px; color:var(--text-2); overflow-wrap:anywhere}
+.item-mark{flex:none; width:14px; text-align:center}
+.item.ok .item-mark{color:var(--positive)}
+.item.warn .item-mark{color:var(--warning)}
+.item.warn .item-text{color:var(--text)}
+.item.note .item-mark,.item.detail .item-mark{color:var(--muted)}
+.item.detail{font-size:13px; color:var(--muted)}
+/* As on the terminal: what worked goes once its step is done, a warning
+   stays where it happened. Show details brings back both. */
+body:not(.details) .item.detail,
+body:not(.details) .step[data-state=done] .item.ok{display:none}
+.after{margin-top:12px}
+.after:empty{display:none}
+
+/* ---------- a question ---------- */
+
+.ask{margin:14px 0 4px; padding:18px; border:1px solid var(--hairline); border-radius:var(--r-card); background:var(--card); transition:opacity var(--fast) var(--ease)}
+.ask[aria-busy=true]{opacity:.55; pointer-events:none}
+.ask-title{font-size:17px; font-weight:600; line-height:1.3}
+.field{display:block; margin-top:14px}
+.field-label{display:block; margin-bottom:6px; font-size:13px; color:var(--muted)}
+.input{width:100%; height:48px; padding:0 14px; border:1px solid var(--hairline-strong); border-radius:var(--r-control); background:var(--raised); font-size:17px; outline:none; -webkit-appearance:none; appearance:none}
+.input:focus{border-color:var(--accent)}
+.input::placeholder{color:var(--muted)}
+.code{position:relative; display:block; width:max-content; margin-top:16px}
+.boxes{display:flex; gap:6px}
+.box{display:grid; place-items:center; width:40px; height:52px; border-radius:var(--r-control); background:var(--raised); box-shadow:inset 0 0 0 1px var(--hairline-strong); font:500 24px/1 var(--mono)}
+.box:nth-child(4){margin-left:8px}
+.box.next{box-shadow:inset 0 0 0 1.5px var(--accent)}
+.code-input{position:absolute; inset:0; width:100%; height:100%; padding:0; border:0; background:transparent; color:transparent; caret-color:transparent; font-size:16px; outline:none; -webkit-appearance:none; appearance:none}
+.code-input::selection{background:transparent}
+.hints{margin-top:12px}
+.hint{padding:2px 0; font-size:14px; color:var(--text-2)}
+.hint.warn{color:var(--text)}
+.hint.warn::before{content:"▲  "; color:var(--warning)}
+.actions{display:flex; flex-wrap:wrap; gap:10px; margin-top:16px}
+.button{display:inline-flex; align-items:center; justify-content:center; height:44px; padding:0 20px; border:1px solid transparent; border-radius:22px; font-size:15px; font-weight:500; line-height:1; text-decoration:none; cursor:pointer; -webkit-tap-highlight-color:transparent; transition:transform var(--fast) var(--ease)}
+.button:active{transform:scale(.98)}
+.button:disabled{opacity:.5}
+.button.primary{background:var(--off-white); color:var(--page)}
+.button.secondary{border-color:var(--hairline); background:var(--control); color:var(--text)}
+.button.quiet{padding:0 12px; background:none; color:var(--text-2)}
+.choices{display:grid; gap:8px; margin-top:14px}
+.button.choice{justify-content:flex-start; width:100%; height:auto; min-height:48px; padding:12px 16px; border-color:var(--hairline); border-radius:var(--r-control); background:var(--raised); color:var(--text); line-height:1.3; text-align:left}
+
+/* ---------- how it ended ---------- */
+
+.outcome{margin-top:20px; padding:20px; border:1px solid var(--hairline); border-radius:var(--r-card); background:var(--card)}
+.outcome[data-tone=good]{box-shadow:inset 0 0 0 1px rgba(76,195,138,.3)}
+.outcome[data-tone=bad]{box-shadow:inset 0 0 0 1px rgba(229,72,77,.35)}
+.outcome-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px}
+.outcome-title{font-size:20px; font-weight:600; letter-spacing:-.01em}
+.outcome[data-tone=good] .outcome-title{color:var(--positive)}
+.outcome[data-tone=bad] .outcome-title{color:var(--negative)}
+.outcome-took{flex:none; font:400 13px/1 var(--mono); color:var(--muted)}
+.outcome > p{margin-top:10px; font-size:15px; color:var(--text-2)}
+.outcome > .button{margin-top:18px}
+.cause{margin-top:12px; font-size:14px; color:var(--muted)}
+.cause summary{cursor:pointer}
+.cause p{margin-top:6px; font:400 13px/1.5 var(--mono); overflow-wrap:anywhere}
+
+footer{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:32px; font-size:13px; color:var(--muted)}
+.details-toggle{display:flex; align-items:center; gap:8px; cursor:pointer}
+.details-toggle input{width:16px; height:16px; margin:0; accent-color:var(--accent)}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important; transition-duration:.01ms !important}
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div class="brand"><span class="badge">ssboot</span><span class="version" id="version"></span></div>
+    <button type="button" class="stop" id="stop" hidden>Stop</button>
+  </header>
+  <h1 class="tagline" id="tagline">Connecting to ssboot…</h1>
+  <p class="keep" id="keep" hidden></p>
+  <p class="banner" id="banner" role="status" hidden></p>
+  <ol class="steps" id="steps" aria-live="polite"></ol>
+  <section class="outcome" id="outcome" hidden></section>
+  <ul class="items after" id="after"></ul>
+  <form class="ask" id="ask" hidden novalidate></form>
+  <footer>
+    <label class="details-toggle"><input type="checkbox" id="details">Show details</label>
+    <span>A project by Frizzle</span>
+  </footer>
+</main>
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const make = (tag, cls, text) => {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  };
+
+  const stepsEl = $("steps"), askEl = $("ask"), outcomeEl = $("outcome"),
+        afterEl = $("after"), bannerEl = $("banner"), stopEl = $("stop");
+
+  let steps = [];        // one per step of the plan
+  let active = -1;       // index of the running step
+  let status = "";       // what it's doing now
+  let skew = 0;          // this clock minus ssboot's
+  let lastHeard = Date.now();
+  let heard = false, ended = false;
+  let asking = null;     // the question on screen
+  let bar = null;        // the progress bar's label and start
+  const links = [];
+  let source = null;
+
+  const now = () => Date.now() - skew;
+  const clock = (ms) => {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  };
+  // ssboot writes its lines in lower case to go after a name; a line on its
+  // own starts with a capital, but names stay as they're spelled: the apps',
+  // and a host or a file (new.ani.sidestore.io, ssboot.log).
+  const cap = (s) => (/^(rootshell|ssboot|iOS)\b|^[^\s.]+\.[^\s.]/.test(s) ? s : s.charAt(0).toUpperCase() + s.slice(1));
+  const mb = (bytes) => (bytes / 1048576).toFixed(1);
+
+  function heardAt(at) {
+    if (typeof at === "number") skew = Date.now() - at;
+    lastHeard = Date.now();
+    heard = true;
+  }
+
+  // One line over the steps, and why it's there: "quiet" (no word from
+  // ssboot), "unsent" (an answer that didn't reach it) or "done". Each goes
+  // when what put it there does.
+  let bannerWhy = "";
+  function banner(text, tone, why) {
+    bannerEl.hidden = !text;
+    bannerEl.textContent = text || "";
+    bannerEl.dataset.tone = tone || "";
+    bannerWhy = text ? why || "" : "";
+  }
+
+  // ---------------------------------------------------------- the steps
+
+  function plan(names) {
+    stepsEl.textContent = "";
+    steps = names.map((name) => {
+      const li = make("li", "step");
+      li.dataset.state = "pending";
+      const row = make("div", "row");
+      const mark = make("span", "mark");
+      mark.setAttribute("aria-hidden", "true");
+      const time = make("span", "time");
+      row.append(mark, make("span", "name", name), time);
+      const line = make("p", "line");
+      const progress = make("div", "progress");
+      progress.hidden = true;
+      const track = make("div", "track");
+      track.setAttribute("role", "progressbar");
+      track.setAttribute("aria-valuemin", "0");
+      track.setAttribute("aria-valuemax", "100");
+      const fill = make("div", "fill");
+      track.append(fill);
+      const ptext = make("p", "progress-text");
+      progress.append(track, ptext);
+      const items = make("ul", "items");
+      li.append(row, line, progress, items);
+      stepsEl.append(li);
+      return { li, mark, time, line, progress, track, fill, ptext, items, startedAt: 0 };
+    });
+    active = -1;
+  }
+
+  function settle(state, text) {
+    const s = steps[active];
+    if (!s) return;
+    s.li.dataset.state = state;
+    s.mark.textContent = state === "done" ? "✓" : "✕";
+    s.line.textContent = text ? cap(text) : "";
+    s.time.textContent = "";
+    s.progress.hidden = true;
+    active = -1;
+    bar = null;
+    place();
+  }
+
+  function begin(n, title, at) {
+    if (active >= 0) settle("done", status);
+    const s = steps[n - 1];
+    if (!s) return;
+    active = n - 1;
+    status = title;
+    s.li.dataset.state = "active";
+    s.mark.textContent = "";
+    s.line.textContent = cap(title);
+    s.startedAt = at;
+    s.time.textContent = "0:00";
+    place();
+  }
+
+  function setStatus(text) {
+    status = text;
+    const s = steps[active];
+    if (s) s.line.textContent = cap(text);
+    else item("note", text);
+  }
+
+  function item(kind, text) {
+    const li = make("li", "item " + kind);
+    const mark = make("span", "item-mark", kind === "ok" ? "✓" : kind === "warn" ? "▲" : "·");
+    mark.setAttribute("aria-hidden", "true");
+    li.append(mark, make("span", "item-text", cap(text)));
+    (steps[active] ? steps[active].items : afterEl).append(li);
+  }
+
+  function progress(e) {
+    const s = steps[active];
+    if (!s) return;
+    if (!bar || bar.label !== e.label) bar = { label: e.label, at: e.at, done: e.done };
+    const percent = e.total > 0 ? Math.min(100, Math.floor((e.done * 100) / e.total)) : 100;
+    s.progress.hidden = false;
+    s.fill.style.width = percent + "%";
+    s.track.setAttribute("aria-valuenow", String(percent));
+    let text = e.bytes
+      ? cap(e.label) + " " + mb(e.done) + " of " + mb(e.total) + " MB"
+      : cap(e.label) + " " + percent + "%";
+    const took = e.at - bar.at, moved = e.done - bar.done;
+    if (e.bytes && took > 2000 && moved > 0 && e.done < e.total) {
+      text += " · " + clock(((e.total - e.done) * took) / moved) + " left";
+    }
+    s.ptext.textContent = text;
+  }
+
+  function progressEnd() {
+    const s = steps[active];
+    if (s) s.progress.hidden = true;
+    bar = null;
+  }
+
+  // ---------------------------------------------------------- how it ended
+
+  function outcome(tone, title, took, paragraphs, cause) {
+    outcomeEl.textContent = "";
+    outcomeEl.dataset.tone = tone;
+    const head = make("div", "outcome-head");
+    head.append(make("h2", "outcome-title", title));
+    if (took) head.append(make("span", "outcome-took", took));
+    outcomeEl.append(head);
+    for (const p of paragraphs) outcomeEl.append(make("p", null, p));
+    if (tone === "good") {
+      for (const link of links) {
+        const a = make("a", "button primary", link.label);
+        a.href = link.url;
+        outcomeEl.append(a);
+      }
+    }
+    if (cause) {
+      const more = make("details", "cause");
+      more.append(make("summary", null, "Details"), make("p", null, cause));
+      outcomeEl.append(more);
+    }
+    outcomeEl.hidden = false;
+    place();
+    outcomeEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  function finish(e) {
+    if (active >= 0) settle("done", status);
+    outcome("good", "✓ " + e.title, e.took || "", e.paragraphs || [], "");
+  }
+
+  function failure(e) {
+    // A question it was waiting on when it stopped won't be answered now; one
+    // it asks after (the log) comes as a new one.
+    if (asking) answered(asking.id);
+    if (active >= 0) settle("failed", "stopped after " + clock(now() - steps[active].startedAt));
+    outcome("bad", "✕ Stopped", e.took || "", [e.advice], e.cause || "");
+  }
+
+  function end() {
+    ended = true;
+    if (asking) answered(asking.id);
+    stopEl.hidden = true;
+    if (source) source.close();
+    banner("ssboot is done. You can close this page.", "", "done");
+  }
+
+  // ---------------------------------------------------------- questions
+
+  function button(label, cls, type, onClick) {
+    const b = make("button", "button " + cls, label);
+    b.type = type;
+    if (onClick) b.addEventListener("click", onClick);
+    return b;
+  }
+
+  // The question goes under the running step, or under the outcome.
+  function place() {
+    const s = steps[active];
+    if (s) s.li.append(askEl);
+    else afterEl.after(askEl);
+  }
+
+  function ask(e) {
+    asking = e;
+    askEl.textContent = "";
+    askEl.removeAttribute("aria-busy");
+    askEl.dataset.kind = e.kind;
+    askEl.onsubmit = (ev) => ev.preventDefault();
+    askEl.append(make("h2", "ask-title", cap(e.question)));
+    const actions = make("div", "actions");
+    let focus = null;
+
+    if (e.kind === "text" || e.kind === "secret" || e.kind === "line") {
+      const field = make("label", "field");
+      if (e.label) field.append(make("span", "field-label", e.label));
+      const input = make("input", "input");
+      if (e.kind === "secret") {
+        input.type = "password";
+        input.autocomplete = "current-password";
+      } else if (/^e-?mail$/i.test(e.label || "")) {
+        input.type = "email";
+        input.autocomplete = "username";
+      } else {
+        input.type = "text";
+        input.autocomplete = "off";
+      }
+      input.setAttribute("autocapitalize", "off");
+      input.setAttribute("autocorrect", "off");
+      input.spellcheck = false;
+      input.enterKeyHint = "send";
+      input.placeholder = e.placeholder || "";
+      field.append(input);
+      askEl.append(field);
+      focus = input;
+      askEl.onsubmit = (ev) => {
+        ev.preventDefault();
+        if (!input.value.trim() && e.kind !== "line") return input.focus();
+        send({ value: input.value });
+      };
+      actions.append(button("Continue", "primary", "submit"));
+      actions.append(button("Cancel", "quiet", "button", () => send({ cancel: true })));
+    } else if (e.kind === "code") {
+      const code = make("label", "code");
+      const boxes = make("span", "boxes");
+      boxes.setAttribute("aria-hidden", "true");
+      for (let i = 0; i < 6; i++) boxes.append(make("span", "box"));
+      const input = make("input", "code-input");
+      input.inputMode = "numeric";
+      input.autocomplete = "one-time-code";
+      input.setAttribute("aria-label", e.label || "Code");
+      const draw = () => {
+        const typed = input.value;
+        [...boxes.children].forEach((box, i) => {
+          box.textContent = typed[i] || "";
+          box.classList.toggle("next", i === typed.length && document.activeElement === input);
+        });
+      };
+      input.addEventListener("input", () => {
+        input.value = input.value.replace(/\D/g, "").slice(0, 6);
+        draw();
+        if (input.value.length === 6) send({ value: input.value });
+      });
+      input.addEventListener("focus", draw);
+      input.addEventListener("blur", draw);
+      code.append(boxes, input);
+      askEl.append(code);
+      const hints = make("ul", "hints");
+      for (const hint of e.hints || []) hints.append(make("li", hint.warning ? "hint warn" : "hint", cap(hint.text)));
+      if (hints.children.length) askEl.append(hints);
+      askEl.onsubmit = (ev) => {
+        ev.preventDefault();
+        if (input.value.length === 6) send({ value: input.value });
+      };
+      if (e.more) actions.append(button("Other ways", "secondary", "button", () => send({ more: true })));
+      actions.append(button("Cancel", "quiet", "button", () => send({ cancel: true })));
+      focus = input;
+    } else if (e.kind === "confirm") {
+      actions.append(button("Yes", e.default ? "primary" : "secondary", "button", () => send({ yes: true })));
+      actions.append(button("No", e.default ? "secondary" : "primary", "button", () => send({ yes: false })));
+    } else if (e.kind === "choose") {
+      const list = make("ol", "choices");
+      e.options.forEach((option, i) => {
+        const li = make("li");
+        li.append(button(option, "choice", "button", () => send({ index: i })));
+        list.append(li);
+      });
+      askEl.append(list);
+      actions.append(button("Back", "quiet", "button", () => send({ cancel: true })));
+    }
+
+    askEl.append(actions);
+    place();
+    askEl.hidden = false;
+    askEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (focus) focus.focus({ preventScroll: true });
+  }
+
+  function answered(id) {
+    if (!asking || asking.id !== id) return;
+    asking = null;
+    askEl.hidden = true;
+    askEl.textContent = "";
+  }
+
+  function busy(on) {
+    if (on) askEl.setAttribute("aria-busy", "true");
+    else askEl.removeAttribute("aria-busy");
+    for (const control of askEl.querySelectorAll("button, input")) control.disabled = on;
+  }
+
+  async function send(fields) {
+    if (!asking || askEl.getAttribute("aria-busy") === "true") return;
+    const id = asking.id;
+    busy(true);
+    try {
+      const reply = await fetch("answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({ id }, fields)),
+        cache: "no-store",
+      });
+      // 409: answered already, from another copy of the page.
+      if (!reply.ok && reply.status !== 409) throw new Error(String(reply.status));
+      if (bannerWhy === "unsent") banner("");
+    } catch (err) {
+      if (asking && asking.id === id) {
+        busy(false);
+        banner("Couldn't reach ssboot. It runs in Minis's terminal: is Minis still open?", "warn", "unsent");
+      }
+    }
+  }
+
+  // ---------------------------------------------------------- the stream
+
+  function handle(e) {
+    heardAt(e.at);
+    switch (e.t) {
+      case "header":
+        $("version").textContent = e.version;
+        $("tagline").textContent = e.tagline;
+        $("keep").textContent = e.note;
+        $("keep").hidden = !e.note;
+        stopEl.hidden = ended;
+        break;
+      case "plan": plan(e.steps); break;
+      case "step": begin(e.n, e.title, e.at); break;
+      case "status": setStatus(e.text); break;
+      case "done": settle("done", e.summary); break;
+      case "ok": case "note": case "warn": case "detail": item(e.t, e.text); break;
+      case "progress": progress(e); break;
+      case "progress_end": progressEnd(); break;
+      case "link": links.push(e); break;
+      case "finish": finish(e); break;
+      case "failure": failure(e); break;
+      case "ask": ask(e); break;
+      case "answered": answered(e.id); break;
+      case "end": end(); break;
+    }
+  }
+
+  function connect() {
+    source = new EventSource("events");
+    source.onmessage = (m) => handle(JSON.parse(m.data));
+    source.addEventListener("ping", (m) => heardAt(JSON.parse(m.data).at));
+    source.onopen = () => {
+      if (bannerWhy === "quiet") banner("");
+    };
+    // The browser tries again by itself, every second (the stream's retry).
+    source.onerror = () => {
+      if (ended) source.close();
+    };
+  }
+
+  // A quiet run still pings every 5 s. Three missed: ssboot isn't there,
+  // most likely because iOS paused Minis behind another app.
+  setInterval(() => {
+    const s = steps[active];
+    if (s && !ended) s.time.textContent = clock(now() - s.startedAt);
+    if (ended) return;
+    if (Date.now() - lastHeard > 15000) {
+      banner(heard
+        ? "ssboot isn't answering. It runs in Minis's terminal, and iOS pauses Minis when you leave it: go back to Minis to carry on."
+        : "Can't reach ssboot. Open this page from ssboot in Minis's terminal.", "warn", "quiet");
+    } else if (bannerWhy === "quiet") {
+      banner("");
+    }
+  }, 1000);
+
+  // Stop asks twice: the first tap only arms it.
+  let armed = 0;
+  stopEl.addEventListener("click", async () => {
+    if (Date.now() - armed > 3000) {
+      armed = Date.now();
+      stopEl.textContent = "Tap again to stop";
+      stopEl.classList.add("armed");
+      setTimeout(() => {
+        if (Date.now() - armed >= 3000 && !stopEl.disabled) {
+          stopEl.textContent = "Stop";
+          stopEl.classList.remove("armed");
+        }
+      }, 3100);
+      return;
+    }
+    stopEl.disabled = true;
+    stopEl.textContent = "Stopping…";
+    try {
+      await fetch("stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    } catch (err) {}
+  });
+
+  $("details").addEventListener("change", (ev) => {
+    document.body.classList.toggle("details", ev.target.checked);
+  });
+
+  connect();
+})();
+</script>
+</body>
+</html>

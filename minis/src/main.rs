@@ -17,6 +17,10 @@
 //! is never written to disk or logged. Like SideInstaller, the developer token
 //! and signing key are kept, in ~/.ssboot/isideload, so a second run needn't
 //! sign in again.
+//!
+//! In Open Minis the run shows as a page in Minis's browser, served on this
+//! iPhone's loopback, and asks its questions there (web.rs); `--terminal`
+//! keeps it in the terminal.
 
 mod account;
 mod devmode;
@@ -29,6 +33,7 @@ mod report;
 mod sign;
 mod tunnel;
 mod ui;
+mod web;
 
 // rust-core's saved-session sign-in, compiled here unchanged so ssboot signs in
 // exactly as SideInstaller does (anisette identity rules, -80046 skip, token
@@ -82,6 +87,9 @@ pub struct Args {
     pub verbose: bool,
     /// Plain lines, not the live screen.
     pub plain: bool,
+    /// The run as a page in Open Minis's browser (`--web`), or in the terminal
+    /// (`--terminal`). Neither: the page where there's Minis to show it.
+    pub web: Option<bool>,
     pub device: SocketAddr,
     /// ~/.ssboot: the pairing file, isideload's store, downloads.
     pub home: PathBuf,
@@ -122,6 +130,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> std::result::Result<Par
         turn_on: false,
         verbose: false,
         plain: false,
+        web: None,
         device: SocketAddr::new(IpAddr::V4(DEFAULT_DEVICE_IP), DEFAULT_RP_PORT),
         home: default_home(),
         pairing_file: None,
@@ -138,6 +147,8 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> std::result::Result<Par
             "-V" | "--version" => return Ok(Parsed::Version),
             "-v" | "--verbose" => args.verbose = true,
             "--plain" => args.plain = true,
+            "--web" => args.web = Some(true),
+            "--terminal" => args.web = Some(false),
             "--device-ip" => {
                 let ip: IpAddr = value("--device-ip")?
                     .parse()
@@ -235,8 +246,15 @@ Open Minis, with your own Apple Account.
   {home}
       Where ssboot keeps its files (default
       ~/.ssboot).
+  {terminal}
+      Answer here in the terminal, not on the
+      page in Minis's browser.
   {plain}
-      Plain lines instead of the live screen.
+      Plain lines instead of the live screen
+      in the terminal.
+  {web}
+      The page even outside Minis: ssboot
+      prints its address.
   {verbose}
       Show the underlying protocol and library
       errors (plain lines, too).
@@ -265,6 +283,8 @@ Open Minis, with your own Apple Account.
         pairing_file = flag("--pairing-file PATH"),
         home = flag("--home DIR"),
         plain = flag("--plain"),
+        web = flag("--web"),
+        terminal = flag("--terminal"),
         verbose = flag("-v, --verbose"),
         help = flag("-h, --help"),
         ip = DEFAULT_DEVICE_IP,
@@ -293,7 +313,19 @@ fn main() -> ExitCode {
         Parsed::Run(args) => args,
     };
 
-    ui::init(args.verbose, args.plain);
+    // Served before anything is shown, so the page gets every event.
+    let page = if args.web.unwrap_or_else(web::available) {
+        match web::start() {
+            Ok(url) => Some(url),
+            Err(e) => {
+                eprintln!("ssboot: couldn't serve the page ({e}), so it runs here instead");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    ui::init(args.verbose, args.plain || page.is_some());
     init_logging(args.verbose);
     ui::header(
         VERSION,
@@ -303,6 +335,9 @@ fn main() -> ExitCode {
             "Installs SideStore on this iPhone."
         },
     );
+    if let Some(url) = &page {
+        show_page(url);
+    }
 
     // Two workers: the software TCP stack inside the tunnel keeps moving while
     // a foreground task waits on it, and threads are cheap next to emulation.
@@ -319,6 +354,15 @@ fn main() -> ExitCode {
         }
     };
 
+    if page.is_some() {
+        // A question waits for the page with this thread blocked, so the
+        // select below can't see Ctrl-C then. A task on a worker can.
+        runtime.spawn(async {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                ui::stop_now("Stopped with Ctrl-C.");
+            }
+        });
+    }
     let outcome = runtime.block_on(async {
         tokio::select! {
             outcome = pipeline(&args) => outcome,
@@ -335,6 +379,33 @@ fn main() -> ExitCode {
     };
     ui::close();
     code
+}
+
+/// Opens the page in Minis's browser, and opens it again whenever return is
+/// pressed in the terminal, for a page swiped away. These lines are for the
+/// terminal only, and kept out of the log: the address carries the key.
+fn show_page(url: &str) {
+    web::on_stop(|| ui::stop_now("Stopped from the page."));
+    if web::show(url) {
+        println!("      The page is open in Minis's browser. Closed it?");
+        println!("      Press return here to open it again.");
+        println!("      To type here instead, stop with Ctrl-C");
+        println!("      and run ssboot --terminal.");
+        let url = url.to_string();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::stdin().lock().lines() {
+                if line.is_err() {
+                    break;
+                }
+                web::show(&url);
+            }
+        });
+    } else {
+        println!("      Open this in a browser on this iPhone, and");
+        println!("      keep this terminal open:");
+        println!("      {url}");
+    }
 }
 
 /// idevice's and isideload's own logs go to stderr: warnings by default, and
@@ -525,6 +596,8 @@ async fn pipeline(args: &Args) -> Result<()> {
         next.push("If it offers to resign itself when you sign in, let it.");
     }
     next.push("Free accounts' apps last 7 days: refresh them in SideStore before then.");
+    // Its own URL scheme (Info.plist): the page's button opens it.
+    ui::link("Open SideStore", "sidestore://");
     ui::finish("SideStore is installed", &next);
     Ok(())
 }
@@ -614,6 +687,11 @@ mod tests {
         assert_eq!(parse("check").command, Command::Check);
         assert!(parse("--plain").plain);
         assert!(!parse("").plain);
+        assert_eq!(parse("--web").web, Some(true));
+        assert_eq!(parse("developer-mode --web").web, Some(true));
+        assert_eq!(parse("--terminal").web, Some(false));
+        assert_eq!(parse("--plain").web, None);
+        assert_eq!(parse("").web, None);
     }
 
     #[test]

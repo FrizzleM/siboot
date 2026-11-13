@@ -20,11 +20,19 @@
 //! Without a terminal on both ends, with `--plain` or `--verbose`, with
 //! TERM=dumb or SSBOOT_PLAIN set, and in the tests, the output is plain lines,
 //! one per event.
+//!
+//! In Open Minis (and with `--web`), every event also goes to a page in
+//! Minis's browser (`web.rs`), and the questions are asked there instead: fields, code boxes
+//! and buttons. The terminal under it keeps the plain lines.
 
 use std::fmt::Write as _;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
+
+use serde_json::json;
+
+use crate::web;
 
 // SGR styles, in ANSI's own colors so the terminal's theme picks the shades
 // for a light or a dark background.
@@ -241,6 +249,13 @@ pub fn is_live() -> bool {
     ui().mode == Mode::Live
 }
 
+/// Whether questions can be more than a typed line: keys one at a time on the
+/// live screen, or the page's fields and buttons. Code boxes and menus need
+/// one or the other.
+pub fn interactive() -> bool {
+    is_live() || web::page().is_some()
+}
+
 /// Moves the spinner, the timer and the progress bar.
 fn tick() {
     loop {
@@ -261,8 +276,9 @@ fn tick() {
 /// mind while it runs.
 pub fn header(version: &str, tagline: &str) {
     record(&format!("ssboot {version} — {tagline}"));
-    let mut ui = ui();
     let note = "Keep Minis open until ssboot is done: iOS pauses it in the background.";
+    web::send(json!({"t": "header", "version": version, "tagline": tagline, "note": note}));
+    let mut ui = ui();
     if ui.mode != Mode::Live {
         println!();
         println!(
@@ -307,6 +323,7 @@ pub fn header(version: &str, tagline: &str) {
 /// The steps this run goes through, by name; plain output counts them out of
 /// `total`.
 pub fn plan(names: &[&'static str], total: usize) {
+    web::send(json!({"t": "plan", "steps": names}));
     let mut ui = ui();
     ui.plan = names.to_vec();
     ui.total = total;
@@ -314,6 +331,7 @@ pub fn plan(names: &[&'static str], total: usize) {
 
 /// Step `n` (from 1) starts: `title` says what it does.
 pub fn step(n: usize, title: &str) {
+    web::send(json!({"t": "step", "n": n, "title": title}));
     let mut ui = ui();
     record(&format!("[{n}/{}] {title}", ui.total));
     if ui.mode != Mode::Live {
@@ -338,6 +356,7 @@ pub fn step(n: usize, title: &str) {
 /// The running step is done: `summary` stays on its line.
 pub fn done(summary: &str) {
     record(&format!("    ✓ {summary}"));
+    web::send(json!({"t": "done", "summary": summary}));
     let mut ui = ui();
     if ui.mode == Mode::Live {
         let above = ui.settle("✓", GOOD, summary);
@@ -348,6 +367,7 @@ pub fn done(summary: &str) {
 /// What the running step is doing now. Plain output prints it.
 pub fn status(msg: &str) {
     record(&format!("      {msg}"));
+    web::send(json!({"t": "status", "text": msg}));
     let mut ui = ui();
     match ui.mode {
         Mode::Live if ui.active.is_some() => {
@@ -363,18 +383,21 @@ pub fn status(msg: &str) {
 }
 
 /// Like `status`, but plain output prints it only with `--verbose`: the live
-/// screen shows each small step, a log only the ones that matter.
+/// screen shows each small step, a log only the ones that matter. The page
+/// shows each one, as the live screen does.
 pub fn activity(msg: &str) {
     if is_live() {
         status(msg);
     } else {
-        detail(msg);
+        web::send(json!({"t": "status", "text": msg}));
+        detail_here(msg);
     }
 }
 
 /// Something that worked.
 pub fn ok(msg: &str) {
     record(&format!("   OK {msg}"));
+    web::send(json!({"t": "ok", "text": msg}));
     let mut ui = ui();
     match ui.mode {
         Mode::Live if ui.active.is_some() => {
@@ -402,6 +425,7 @@ pub fn ok(msg: &str) {
 /// Information that stays on screen.
 pub fn note(msg: &str) {
     record(&format!("      {msg}"));
+    web::send(json!({"t": "note", "text": msg}));
     let mut ui = ui();
     if ui.mode == Mode::Live {
         let lines = ui.note_lines(DIM, msg);
@@ -413,6 +437,7 @@ pub fn note(msg: &str) {
 
 pub fn warn(msg: &str) {
     record(&format!("   !! {msg}"));
+    web::send(json!({"t": "warn", "text": msg}));
     let mut ui = ui();
     if ui.mode == Mode::Live {
         let max = line_width();
@@ -430,8 +455,15 @@ pub fn warn(msg: &str) {
     }
 }
 
-/// Useful only when diagnosing. Shown with `--verbose`, which is plain.
+/// Useful only when diagnosing. Shown with `--verbose`, which is plain, and
+/// on the page under Show details.
 pub fn detail(msg: &str) {
+    web::send(json!({"t": "detail", "text": msg}));
+    detail_here(msg);
+}
+
+/// `detail` on this terminal and in the log, not on the page.
+fn detail_here(msg: &str) {
     record(&format!("   ·· {msg}"));
     let mut ui = ui();
     if ui.verbose && ui.mode != Mode::Live {
@@ -462,6 +494,7 @@ pub fn percent(label: &str, percent: u64) {
 }
 
 fn show_bar(label: &str, done: u64, total: u64, bytes: bool) {
+    web::progress(label, done, total, bytes);
     let mut ui = ui();
     if ui.mode != Mode::Live {
         let percent = (done.saturating_mul(100))
@@ -491,6 +524,7 @@ fn show_bar(label: &str, done: u64, total: u64, bytes: bool) {
 
 /// The progress bar is done with.
 pub fn progress_end() {
+    web::progress_end();
     let mut ui = ui();
     if ui.mode == Mode::Live {
         ui.bar = None;
@@ -505,6 +539,8 @@ pub fn progress_end() {
 pub fn finish(title: &str, paragraphs: &[&str]) {
     record(&format!("Done: {title}"));
     let mut ui = ui();
+    let took = clock(ui.run_started.elapsed().as_secs());
+    web::send(json!({"t": "finish", "title": title, "paragraphs": paragraphs, "took": took}));
     if ui.mode != Mode::Live {
         ui.end_plain_line();
         println!();
@@ -527,7 +563,6 @@ pub fn finish(title: &str, paragraphs: &[&str]) {
     }
     let status = ui.status.clone();
     let mut above = ui.settle("✓", GOOD, &status);
-    let took = clock(ui.run_started.elapsed().as_secs());
     above.push(String::new());
     above.extend(boxed(
         ui.color,
@@ -551,7 +586,11 @@ pub fn failure(advice: &str, raw: &str) {
         record(&format!("   cause: {raw}"));
     }
     let mut ui = ui();
+    let took = clock(ui.run_started.elapsed().as_secs());
+    web::send(json!({"t": "failure", "advice": advice, "cause": raw, "took": took}));
     if ui.mode != Mode::Live {
+        // Stopping at the question after this says nothing more (`stop_now`).
+        ui.stopped = true;
         ui.end_plain_line();
         flush();
         eprintln!();
@@ -572,9 +611,17 @@ pub fn failure(advice: &str, raw: &str) {
     ui.stopped = true;
 }
 
-/// Leave the terminal as it was. Safe to call more than once.
+/// A button on the page, in the box the run ends in (`finish`): the app it
+/// installed, say. Nothing on the terminal.
+pub fn link(label: &str, url: &str) {
+    web::send(json!({"t": "link", "label": label, "url": url}));
+}
+
+/// Leave the terminal as it was, and tell the page the run is over. Safe to
+/// call more than once.
 pub fn close() {
     ui().close();
+    web::close();
 }
 
 // ---------------------------------------------------------------- prompts
@@ -583,6 +630,11 @@ pub fn close() {
 /// it's empty, while the running step shows `question`. `plain` is the prompt
 /// in plain output. None when the user stops (Esc, or the end of input).
 pub fn ask_text(question: &str, label: &str, placeholder: &str, plain: &str) -> Option<String> {
+    if let Some(page) = web::page() {
+        let answer = page.text(question, label, placeholder, false);
+        record_answer(question, answer.as_ref().map(|_| "(typed)"));
+        return answer;
+    }
     if !is_live() {
         let answer = ask(plain);
         record_answer(question, answer.as_ref().map(|_| "(typed)"));
@@ -612,7 +664,9 @@ pub fn ask_secret(
     placeholder: &str,
     plain: &str,
 ) -> io::Result<Option<String>> {
-    let answer = if is_live() {
+    let answer = if let Some(page) = web::page() {
+        Ok(page.text(question, label, placeholder, true))
+    } else if is_live() {
         let saved = swap_status(question);
         let asked = field(label, placeholder, true);
         swap_status(&saved);
@@ -634,7 +688,12 @@ pub fn ask_secret(
 /// A six-digit code, in boxes that fill as it's typed (the sixth digit sends
 /// it), while the running step shows `question`; `hint` goes under the boxes.
 pub fn ask_code(question: &str, label: &str, hint: &str, plain: &str) -> Option<String> {
-    let answer = if is_live() {
+    let answer = if let Some(page) = web::page() {
+        match page.code(question, label, &[(false, hint)], false) {
+            web::Code::Digits(digits) => Some(digits),
+            web::Code::More | web::Code::Cancel => None,
+        }
+    } else if is_live() {
         let saved = swap_status(question);
         let asked = code(label, &[Hint::Plain(hint.to_string())], false);
         swap_status(&saved);
@@ -651,6 +710,7 @@ pub fn ask_code(question: &str, label: &str, hint: &str, plain: &str) -> Option<
 }
 
 /// A line under the code boxes.
+#[derive(Clone)]
 pub enum Hint {
     Plain(String),
     Warning(String),
@@ -658,25 +718,44 @@ pub enum Hint {
 
 pub enum CodeAnswer {
     Code(String),
-    /// A letter was typed: the user wants another way to get the code.
+    /// A letter was typed, or Other ways tapped: the user wants another way
+    /// to get the code.
     More,
     Cancel,
 }
 
-/// Live screen only: a six-digit code, while the running step shows
-/// `question`; a letter asks for `More`. None on plain output, or when keys
-/// can't be read one at a time after all (the screen is plain from then on):
-/// then ask the plain way.
+/// The live screen or the page only (`interactive`): a six-digit code, while
+/// the running step shows `question`; a letter, or the page's Other ways,
+/// asks for `More`. None on plain output, or when keys can't be read one at a
+/// time after all (the screen is plain from then on): then ask the plain way.
 pub fn ask_code_or_more(question: &str, label: &str, hints: &[Hint]) -> Option<CodeAnswer> {
-    if !is_live() {
-        return None;
-    }
-    let saved = swap_status(question);
-    let answer = match code(label, hints, true) {
-        Asked::Answer(answer) => Some(answer),
-        Asked::NoKeys => None,
+    let answer = if let Some(page) = web::page() {
+        let hints: Vec<(bool, &str)> = hints
+            .iter()
+            .map(|hint| match hint {
+                Hint::Plain(text) => (false, text.as_str()),
+                Hint::Warning(text) => (true, text.as_str()),
+            })
+            .collect();
+        Some(match page.code(question, label, &hints, true) {
+            web::Code::Digits(digits) => CodeAnswer::Code(digits),
+            web::Code::More => CodeAnswer::More,
+            web::Code::Cancel => CodeAnswer::Cancel,
+        })
+    } else if is_live() {
+        // The keys that answer, under the hints given.
+        let mut shown = hints.to_vec();
+        shown.push(Hint::Plain("o: other ways · esc: cancel".into()));
+        let saved = swap_status(question);
+        let answer = match code(label, &shown, true) {
+            Asked::Answer(answer) => Some(answer),
+            Asked::NoKeys => None,
+        };
+        swap_status(&saved);
+        answer
+    } else {
+        None
     };
-    swap_status(&saved);
     match &answer {
         Some(CodeAnswer::Code(_)) => record_answer(question, Some("(a code)")),
         Some(CodeAnswer::More) => record_answer(question, Some("other ways")),
@@ -690,7 +769,10 @@ pub fn ask_code_or_more(question: &str, label: &str, hints: &[Hint]) -> Option<C
 /// the highlighted one, which starts as `default`. With no step running (the
 /// run has stopped), the question goes above the choice.
 pub fn confirm(question: &str, default: bool) -> bool {
-    let answer = confirm_prompt(question, default);
+    let answer = match web::page() {
+        Some(page) => page.confirm(question, default),
+        None => confirm_prompt(question, default),
+    };
     record_answer(question, Some(if answer { "Yes" } else { "No" }));
     answer
 }
@@ -762,7 +844,11 @@ fn confirm_prompt(question: &str, default: bool) -> bool {
 /// One of `options`, while the running step shows `title`: the arrows move,
 /// a digit or return picks. None when the user backs out (Esc).
 pub fn choose(title: &str, options: &[String]) -> Option<usize> {
-    let picked = choose_prompt(title, options);
+    let picked = match web::page() {
+        Some(_) if options.is_empty() => None,
+        Some(page) => page.choose(title, options),
+        None => choose_prompt(title, options),
+    };
     record_answer(title, picked.and_then(|i| options.get(i)).map(String::as_str));
     picked
 }
@@ -846,7 +932,11 @@ fn choose_prompt(title: &str, options: &[String]) -> Option<usize> {
 }
 
 /// A line from the terminal, as plain output asks: None at the end of input.
+/// With the page, the page asks for it.
 pub fn ask(prompt: &str) -> Option<String> {
+    if let Some(page) = web::page() {
+        return page.line(prompt);
+    }
     print!("{INDENT}{prompt}");
     flush();
     let mut line = String::new();
@@ -1026,19 +1116,37 @@ fn swap_status(text: &str) -> String {
 
 /// Ctrl-C at a prompt: stop now, as the signal would.
 fn interrupt() -> ! {
+    stop_now("Stopped with Ctrl-C.")
+}
+
+/// Stop the run at once, saying `reason`: Ctrl-C at a prompt on the live
+/// screen and, with the page, the signal or the page's Stop. After a run has
+/// already stopped (at the question about the log), it only leaves.
+pub fn stop_now(reason: &str) -> ! {
     {
         let mut ui = ui();
+        if !ui.stopped {
+            record(&format!("Stopped: {reason}"));
+            let took = clock(ui.run_started.elapsed().as_secs());
+            web::send(json!({"t": "failure", "advice": reason, "cause": "", "took": took}));
+        }
         if ui.mode == Mode::Live {
             let above = if ui.stopped {
                 ui.dialog = None;
                 Vec::new()
             } else {
-                ui.stopped("Stopped with Ctrl-C.", false)
+                ui.stopped(reason, false)
             };
             ui.paint(&above);
+        } else if !ui.stopped {
+            ui.end_plain_line();
+            flush();
+            eprintln!();
+            eprintln!("{} {reason}", ui.style(BAD, "Stopped:"));
         }
         ui.close();
     }
+    web::close();
     term::restore();
     std::process::exit(130);
 }
@@ -1884,12 +1992,13 @@ mod term {
         true
     }
 
-    /// The settings as they were, and the cursor shown.
+    /// The settings as they were, and the cursor shown. Nothing where the
+    /// live screen never started: plain output changed neither.
     pub fn restore() {
         if let Some(saved) = SAVED.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
             set(saved);
+            write("\x1b[?25h");
         }
-        write("\x1b[?25h");
     }
 
     /// Keys one at a time while it lives: no line editing, no echo, and
