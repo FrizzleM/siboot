@@ -1,4 +1,4 @@
-//! `siboot-pair`: siboot's pairing step, for rootshell's WASM runtime.
+//! `ssboot-pair`: ssboot's pairing step, for rootshell's WASM runtime.
 //!
 //! Pairs this iPhone with itself from an App Store app. iOS 27 lists a host
 //! in Settings › Privacy & Security › Developer Mode › "Pair with …" when it
@@ -11,8 +11,13 @@
 //! with idevice's own `PairableHost`, the responder SideInstaller uses.
 //!
 //! It writes `rp_pairing_file.plist` into rootshell's folder, then offers it
-//! on this iPhone's loopback, behind a transfer code, to siboot in Open Minis
-//! (../minis), which runs the other six steps.
+//! on this iPhone's loopback, behind a transfer code, to ssboot in Open Minis
+//! (../minis), which runs the other six steps and installs SideStore.
+//!
+//! It's siboot-pair with ssboot's name and install command. The files it keeps
+//! and the hand-off (`SIBOOT1 <code>` on port 61207) are siboot-pair's, so a
+//! host identity made by either is kept, and siboot and ssboot each take the
+//! file from either.
 
 mod mdns;
 mod rs;
@@ -33,14 +38,14 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const HOST_MODEL: &str = "Mac17,7";
 /// Connections tried before giving up: a stray one, a mistyped code, the one that pairs.
 const MAX_ATTEMPTS: u32 = 3;
-/// Settings shows "Pair with siboot".
-const HOST_NAME: &str = "siboot";
+/// Settings shows "Pair with ssboot".
+const HOST_NAME: &str = "ssboot";
 const PAIRING_FILE: &str = "rp_pairing_file.plist";
 const ALT_IRK_FILE: &str = "host_alt_irk";
 /// Where `ifconfig en0 > ifconfig.txt` leaves the address for us.
 const IFCONFIG_FILE: &str = "ifconfig.txt";
 const INSTALL: &str =
-    "wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh";
+    "wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/minis/install.sh | sh";
 
 struct Args {
     ip: [u8; 4],
@@ -53,12 +58,12 @@ struct Args {
 /// Kept narrow: rootshell's terminal is an iPhone's, about 40 columns upright.
 fn usage() {
     println!(
-        "siboot-pair {VERSION}
+        "ssboot-pair {VERSION}
 Pairs this iPhone with itself, from rootshell.
 
 USAGE
   ifconfig en0 > ifconfig.txt
-  ./siboot-pair.wasm
+  ./ssboot-pair.wasm
 
   One line at a time. It reads this
   iPhone's Wi-Fi address from ifconfig.txt
@@ -67,7 +72,7 @@ USAGE
   Settings › Location Diary Mode › Session
   Only, which keeps rootshell running
   while you're in Settings. After pairing
-  it hands the pairing file to siboot in
+  it hands the pairing file to ssboot in
   Open Minis.
 
 OPTIONS
@@ -90,7 +95,7 @@ fn parse_args() -> Result<Option<Args>, String> {
         match arg.as_str() {
             "-h" | "--help" => return Ok(None),
             "-V" | "--version" => {
-                println!("siboot-pair {VERSION}");
+                println!("ssboot-pair {VERSION}");
                 std::process::exit(0);
             }
             "--plain" => args.plain = true,
@@ -104,11 +109,11 @@ fn parse_args() -> Result<Option<Args>, String> {
         }
     }
     let saved = std::fs::read_to_string(IFCONFIG_FILE).map_err(|_| {
-        format!("no {IFCONFIG_FILE} here. Run `ifconfig en0 > {IFCONFIG_FILE}` first, then `./siboot-pair.wasm`.")
+        format!("no {IFCONFIG_FILE} here. Run `ifconfig en0 > {IFCONFIG_FILE}` first, then `./ssboot-pair.wasm`.")
     })?;
     args.ip = wifi_address(&saved).ok_or(format!(
         "no IPv4 address in {IFCONFIG_FILE}. Turn on Wi-Fi, run `ifconfig en0 > {IFCONFIG_FILE}` again, \
-         then `./siboot-pair.wasm`."
+         then `./ssboot-pair.wasm`."
     ))?;
     Ok(Some(args))
 }
@@ -139,8 +144,8 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Err(problem) => {
-            eprintln!("siboot-pair: {problem}");
-            eprintln!("try `./siboot-pair.wasm --help`");
+            eprintln!("ssboot-pair: {problem}");
+            eprintln!("try `./ssboot-pair.wasm --help`");
             return ExitCode::from(2);
         }
     };
@@ -159,7 +164,7 @@ fn main() -> ExitCode {
 }
 
 /// Where the log of a run that stopped goes, next to the pairing file.
-const LOG_FILE: &str = "siboot-pair.log";
+const LOG_FILE: &str = "ssboot-pair.log";
 
 /// After a failure: save the log, and ask whether to copy it (return alone
 /// says yes).
@@ -204,7 +209,7 @@ fn run(args: &Args) -> Result<(), String> {
 
     let port = args.port.unwrap_or_else(random_port);
     let listener = rs::Socket::listen(port).map_err(|e| format!("couldn't listen on port {port}: {e}"))?;
-    let host = format!("siboot-{}.local", id.split('-').next().unwrap_or("host").to_ascii_lowercase());
+    let host = format!("ssboot-{}.local", id.split('-').next().unwrap_or("host").to_ascii_lowercase());
     let ad = mdns::Advert { service: &args.service, instance: &id, host: &host, ip: args.ip, port, txt: &txt };
 
     // A burst before waiting: nothing can be sent while blocked in accept.
@@ -248,48 +253,48 @@ fn run(args: &Args) -> Result<(), String> {
     hand_off(&file.to_bytes())
 }
 
-/// Where siboot in Minis asks for the pairing file, on this iPhone's loopback.
+/// Where ssboot in Minis asks for the pairing file, on this iPhone's loopback.
 /// Also in minis/src/pairing.rs.
 const HANDOFF_PORT: u16 = 61207;
 const HANDOFF_TRIES: u32 = 5;
 
-/// Offer the pairing file to siboot in Open Minis, over this iPhone's own
+/// Offer the pairing file to ssboot in Open Minis, over this iPhone's own
 /// loopback, until it has it.
 fn hand_off(pairing: &[u8]) -> Result<(), String> {
     let listener = rs::Socket::listen(HANDOFF_PORT).map_err(|e| {
         format!(
             "paired, but couldn't offer the file to Minis ({e}). Close any other rootshell tab \
-             running siboot-pair, then run `./siboot-pair.wasm` again."
+             running ssboot-pair, then run `./ssboot-pair.wasm` again."
         )
     })?;
     let code = transfer_code();
     ui::blank();
     ui::heading("Next, in Open Minis (App Store):");
-    ui::text("Install SideInstaller from its terminal (Minis › Settings › Terminal). Run:");
+    ui::text("Install SideStore from its terminal (Minis › Settings › Terminal). Run:");
     ui::blank();
     ui::command(INSTALL);
     ui::blank();
-    ui::heading("When siboot asks, type this code:");
+    ui::heading("When ssboot asks, type this code:");
     ui::big(&code);
-    ui::notify("siboot transfer code", &format!("{} — type it in Minis when siboot asks", ui::spaced(&code)));
+    ui::notify("ssboot transfer code", &format!("{} — type it in Minis when ssboot asks", ui::spaced(&code)));
     ui::blank();
     ui::dim(
-        "siboot only asks when it has no pairing file that works yet. If it goes ahead without \
+        "ssboot only asks when it has no pairing file that works yet. If it goes ahead without \
          asking, close this tab once Minis is done. Ctrl-C stops the offer.",
     );
     ui::blank();
-    ui::live("Offering the file to siboot…");
+    ui::live("Offering the file to ssboot…");
     if offer(&listener, &code, pairing) {
-        ui::settle(ui::Mark::Good, "siboot has the pairing file. You can close rootshell's tab.");
+        ui::settle(ui::Mark::Good, "ssboot has the pairing file. You can close rootshell's tab.");
         Ok(())
     } else {
-        Err("the offer ended. Run `./siboot-pair.wasm` again for a new transfer code.".into())
+        Err("the offer ended. Run `./ssboot-pair.wasm` again for a new transfer code.".into())
     }
 }
 
-/// Answer siboot's requests on `listener` until one brings `code`, then send
+/// Answer ssboot's requests on `listener` until one brings `code`, then send
 /// the file. The code keeps any other app on the iPhone from taking it:
-/// `HANDOFF_TRIES` wrong ones end the offer. True once siboot has the file.
+/// `HANDOFF_TRIES` wrong ones end the offer. True once ssboot has the file.
 fn offer(listener: &rs::Socket, code: &str, pairing: &[u8]) -> bool {
     let mut wrong = 0;
     while wrong < HANDOFF_TRIES {
@@ -303,8 +308,8 @@ fn offer(listener: &rs::Socket, code: &str, pairing: &[u8]) -> bool {
             match sent {
                 Ok(()) => return true,
                 Err(e) => {
-                    ui::say(ui::Mark::Warn, &format!("Sending the file broke off ({e}). Waiting for siboot to ask again."));
-                    ui::live("Offering the file to siboot…");
+                    ui::say(ui::Mark::Warn, &format!("Sending the file broke off ({e}). Waiting for ssboot to ask again."));
+                    ui::live("Offering the file to ssboot…");
                 }
             }
         } else {
@@ -381,7 +386,7 @@ fn show_code(pin: &str) {
     ui::big(pin);
     ui::dim("It's in your notifications too.");
     ui::blank();
-    ui::notify("siboot pairing code", &format!("{} — type it into Settings", ui::spaced(pin)));
+    ui::notify("ssboot pairing code", &format!("{} — type it into Settings", ui::spaced(pin)));
     ui::live("Waiting for Settings to check it…");
 }
 
@@ -403,7 +408,7 @@ fn identity() -> (RpPairingFile, Option<[u8; 16]>) {
 }
 
 /// `generate` derives the identifier from the name, the same for every
-/// siboot; a random one keeps this host's records apart.
+/// ssboot; a random one keeps this host's records apart.
 fn fresh_identity() -> RpPairingFile {
     let mut fresh = RpPairingFile::generate(HOST_NAME);
     fresh.identifier = uuid::Uuid::new_v4().to_string().to_uppercase();
@@ -522,7 +527,7 @@ mod tests {
         assert_eq!(paired.expect("host paired after the stray connection").name, fake_iphone::NAME);
     }
 
-    /// siboot's side of the hand-off (minis/src/pairing.rs): one request per
+    /// ssboot's side of the hand-off (minis/src/pairing.rs): one request per
     /// connection, the answer's first line, then the file.
     fn ask_for_file(port: u16, code: &str) -> (String, Vec<u8>) {
         use std::io::{BufRead, Read, Write};
@@ -545,7 +550,7 @@ mod tests {
         let (answer, file) = ask_for_file(port, "481516");
         assert_eq!(answer, "OK 12");
         assert_eq!(file, b"pairing file");
-        assert!(offered.join().unwrap(), "the offer ends once siboot has the file");
+        assert!(offered.join().unwrap(), "the offer ends once ssboot has the file");
     }
 
     #[test]

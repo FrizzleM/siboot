@@ -125,7 +125,7 @@ pub async fn install(connection: &mut Connection, app_dir: &Path) -> Result<Stri
     if !missing.is_empty() {
         return Err(Fail::new(
             format!(
-                "{} files didn't arrive whole on the iPhone. Run siboot again.",
+                "{} files didn't arrive whole on the iPhone. Run ssboot again.",
                 missing.len()
             ),
             missing.join(", "),
@@ -172,13 +172,13 @@ fn install_advice(raw: &str) -> String {
     if lower.contains("maximum number of installed apps")
         || lower.contains("maximum number of apps for free development profiles")
     {
-        "This iPhone already has 3 apps signed with a free Apple Account. Delete one, then run siboot again.".into()
+        "This iPhone already has 3 apps signed with a free Apple Account. Delete one, then run ssboot again.".into()
     } else if lower.contains("0xe8008015") || lower.contains("provisioning") {
-        "installd refused the provisioning profile. Run siboot again; if it keeps failing, the \
+        "installd refused the provisioning profile. Run ssboot again; if it keeps failing, the \
          profile may not include this iPhone."
             .into()
     } else {
-        "installd refused SideInstaller.".into()
+        "installd refused SideStore.".into()
     }
 }
 
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn folders_come_before_their_files_and_sizes_add_up() {
         let root =
-            std::env::temp_dir().join(format!("siboot-bundle-{}/Demo.app", std::process::id()));
+            std::env::temp_dir().join(format!("ssboot-bundle-{}/Demo.app", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("Frameworks/Core.framework")).unwrap();
         std::fs::write(root.join("Info.plist"), b"1234").unwrap();

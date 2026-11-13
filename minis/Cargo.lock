@@ -2811,26 +2811,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "siboot"
-version = "0.16.1"
-dependencies = [
- "hex",
- "idevice",
- "isideload",
- "libc",
- "plist",
- "reqwest",
- "rootcause",
- "rpassword",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "signal-hook-registry"
 version = "1.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2936,6 +2916,29 @@ dependencies = [
  "crypto-common 0.2.2",
  "digest 0.11.3",
  "subtle",
+]
+
+[[package]]
+name = "ssboot"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "hex",
+ "idevice",
+ "isideload",
+ "libc",
+ "memchr",
+ "plist",
+ "reqwest",
+ "rootcause",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zip",
 ]
 
 [[package]]

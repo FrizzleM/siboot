@@ -1,6 +1,6 @@
 //! The terminal UI: a live screen on a terminal, plain lines everywhere else.
 //!
-//! On Minis's terminal, siboot keeps a small live area at the bottom of what
+//! On Minis's terminal, ssboot keeps a small live area at the bottom of what
 //! it has printed: the running step with a spinner and what it's doing, a
 //! progress bar, the steps still to come, and prompts that read keys (y/n,
 //! menus, code boxes, a masked password). A finished step, a warning or an
@@ -8,7 +8,7 @@
 //! log of the run.
 //!
 //! The live area ends in the credit, dim, from the header on: it's under every
-//! step and prompt, and still the last line when siboot exits. It's the first
+//! step and prompt, and still the last line when ssboot exits. It's the first
 //! thing to go on a screen too short for it.
 //!
 //! The live area is redrawn in place, so it never wraps and never outgrows
@@ -18,7 +18,7 @@
 //! thing the user can change while the raw cause goes to the verbose channel.
 //!
 //! Without a terminal on both ends, with `--plain` or `--verbose`, with
-//! TERM=dumb or SIBOOT_PLAIN set, and in the tests, the output is plain lines,
+//! TERM=dumb or SSBOOT_PLAIN set, and in the tests, the output is plain lines,
 //! one per event.
 
 use std::fmt::Write as _;
@@ -128,7 +128,7 @@ fn flush() {
 // ---------------------------------------------------------------- the log
 
 /// Everything the run showed, as plain lines stamped with the time since it
-/// started, and the libraries' own log lines: the log siboot offers to copy
+/// started, and the libraries' own log lines: the log ssboot offers to copy
 /// when it stops (`report.rs`).
 struct Record {
     lines: Vec<String>,
@@ -226,7 +226,7 @@ pub fn init(verbose: bool, plain: bool) {
         && !plain
         && !cfg!(test)
         && !matches!(std::env::var("TERM").as_deref(), Ok("dumb"))
-        && std::env::var_os("SIBOOT_PLAIN").is_none()
+        && std::env::var_os("SSBOOT_PLAIN").is_none()
         && term::start();
     let mut ui = ui();
     ui.verbose = verbose;
@@ -260,14 +260,14 @@ fn tick() {
 /// The name, version and what this run does, with the one thing to keep in
 /// mind while it runs.
 pub fn header(version: &str, tagline: &str) {
-    record(&format!("siboot {version} — {tagline}"));
+    record(&format!("ssboot {version} — {tagline}"));
     let mut ui = ui();
-    let note = "Keep Minis open until siboot is done: iOS pauses it in the background.";
+    let note = "Keep Minis open until ssboot is done: iOS pauses it in the background.";
     if ui.mode != Mode::Live {
         println!();
         println!(
             "{} {}",
-            ui.style(STRONG, "siboot"),
+            ui.style(STRONG, "ssboot"),
             ui.style(DIM, &format!("{version} · {CREDIT}"))
         );
         println!("{}", ui.style(DIM, tagline));
@@ -281,7 +281,7 @@ pub fn header(version: &str, tagline: &str) {
     above.push(
         Line::new()
             .add(NONE, "  ")
-            .add(BADGE, " siboot ")
+            .add(BADGE, " ssboot ")
             .add(DIM, format!(" {version}"))
             .render(max, ui.color),
     );
@@ -1270,7 +1270,7 @@ impl Ui {
             term::size().0,
         ));
         if more {
-            let hint = "Run siboot again with --verbose to see the underlying error.";
+            let hint = "Run ssboot again with --verbose to see the underlying error.";
             above.extend(hanging(
                 &Line::new().add(NONE, "  "),
                 DIM,
@@ -1827,7 +1827,7 @@ mod term {
 
     use super::Key;
 
-    /// The terminal's settings before siboot changed them.
+    /// The terminal's settings before ssboot changed them.
     static SAVED: Mutex<Option<libc::termios>> = Mutex::new(None);
 
     /// Columns and rows. Without an answer, an iPhone's upright: a guess too
@@ -1867,7 +1867,7 @@ mod term {
         unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, t) };
     }
 
-    /// For the live screen: keys typed while siboot works don't echo into
+    /// For the live screen: keys typed while ssboot works don't echo into
     /// it, and a panic leaves the terminal as it was. False when the terminal
     /// has no settings to change.
     pub fn start() -> bool {
@@ -1992,7 +1992,7 @@ mod tests {
 
     #[test]
     fn widths_count_columns_not_bytes() {
-        assert_eq!(width("siboot"), 6);
+        assert_eq!(width("ssboot"), 6);
         assert_eq!(width("✓ ◆ ○ ━ ╸ ─ › … ⠋"), 17);
         assert_eq!(width("日本"), 4);
         assert_eq!(width("e\u{301}"), 1);
@@ -2019,8 +2019,8 @@ mod tests {
     #[test]
     fn words_wrap_and_long_ones_are_cut() {
         assert_eq!(
-            wrap("Keep Minis open until siboot is done", 16),
-            ["Keep Minis open", "until siboot is", "done"]
+            wrap("Keep Minis open until ssboot is done", 16),
+            ["Keep Minis open", "until ssboot is", "done"]
         );
         assert_eq!(wrap("", 10), [""]);
         assert_eq!(
@@ -2117,7 +2117,7 @@ mod tests {
             "✓ Done",
             "3:41",
             &[
-                "SideInstaller is installed.",
+                "SideStore is installed.",
                 "Free accounts' apps last 7 days.",
             ],
             46,

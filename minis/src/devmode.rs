@@ -1,4 +1,4 @@
-//! `siboot developer-mode`: shows Developer Mode under Settings › Privacy &
+//! `ssboot developer-mode`: shows Developer Mode under Settings › Privacy &
 //! Security, or turns it on, as SideInstaller's Settings › Developer Mode does
 //! (`Engine.requestDeveloperMode` in ../SideInstaller/ios-app): inside the tunnel, lockdownd
 //! says whether it's on (`DeveloperModeStatus` in `com.apple.security.mac.amfi`),
@@ -68,11 +68,11 @@ impl Services for Connection {
     }
 }
 
-/// Added to a failure before the request: what's left when siboot can't reach
+/// Added to a failure before the request: what's left when ssboot can't reach
 /// the iPhone.
 pub fn unreachable_note(f: Fail) -> Fail {
     let mut advice = format!(
-        "{} siboot changes Developer Mode through this same pairing and tunnel, so it can't \
+        "{} ssboot changes Developer Mode through this same pairing and tunnel, so it can't \
          until they work.",
         f.advice
     );
@@ -93,7 +93,7 @@ pub async fn run(
     let on = match read_status(device).await {
         Ok(on) => on,
         Err(f) => {
-            ui::warn("Couldn't read whether Developer Mode is on, so siboot asks anyway.");
+            ui::warn("Couldn't read whether Developer Mode is on, so ssboot asks anyway.");
             ui::detail(&f.raw);
             None
         }
@@ -109,7 +109,7 @@ pub async fn run(
             Sent::Done => Ok(Outcome::Shown),
             Sent::HungUp(raw) => Err(Fail::new(
                 "The iPhone stopped answering before it said whether it shows Developer Mode. \
-                 Look under Settings › Privacy & Security; if it isn't there, run siboot \
+                 Look under Settings › Privacy & Security; if it isn't there, run ssboot \
                  developer-mode again.",
                 raw,
             )),
@@ -124,10 +124,10 @@ pub async fn run(
         "Without a passcode, this iPhone restarts right away to turn Developer Mode on, and Minis \
          stops with it. Once you unlock it, tap Turn On in the alert iOS shows.",
     );
-    ui::note("With a passcode, iOS refuses, and siboot shows the switch in Settings instead.");
+    ui::note("With a passcode, iOS refuses, and ssboot shows the switch in Settings instead.");
     if !confirm() {
         return Err(Fail::new(
-            "Nothing was sent, so Developer Mode stays off. `siboot developer-mode` without \
+            "Nothing was sent, so Developer Mode stays off. `ssboot developer-mode` without \
              --turn-on only shows it in Settings, and restarts nothing.",
             "",
         ));
@@ -146,7 +146,7 @@ pub async fn run(
                 Sent::Done => Ok(Outcome::ShownForPasscode),
                 Sent::HungUp(raw) | Sent::Refused(raw) => Err(Fail::new(
                     "iOS turns Developer Mode on from here only while the iPhone has no passcode, \
-                     and it didn't take the request to show it in Settings either. Run siboot \
+                     and it didn't take the request to show it in Settings either. Run ssboot \
                      developer-mode (without --turn-on) again.",
                     raw,
                 )),
@@ -277,11 +277,11 @@ mod tests {
                 };
                 write_message(&mut theirs, reply).await;
             });
-            Ok(LockdownClient::new(Idevice::new(Box::new(ours), "siboot")))
+            Ok(LockdownClient::new(Idevice::new(Box::new(ours), "ssboot")))
         }
 
         async fn amfi(&mut self) -> std::result::Result<AmfiClient, IdeviceError> {
-            let answer = self.answers.pop().expect("siboot opened more AMFI connections than expected");
+            let answer = self.answers.pop().expect("ssboot opened more AMFI connections than expected");
             let (ours, mut theirs) = tokio::io::duplex(64 * 1024);
             let sent = self.sent.clone();
             tokio::spawn(async move {
@@ -387,7 +387,7 @@ mod tests {
     #[test]
     fn the_note_keeps_the_original_advice_and_cause() {
         let f = unreachable_note(Fail::new("Couldn't reach 10.7.0.1:49152.", "refused"));
-        assert!(f.advice.starts_with("Couldn't reach 10.7.0.1:49152. siboot changes"));
+        assert!(f.advice.starts_with("Couldn't reach 10.7.0.1:49152. ssboot changes"));
         assert!(f.advice.ends_with("turn it on there instead."), "{}", f.advice);
         assert_eq!(f.raw, "refused");
 

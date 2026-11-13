@@ -39,7 +39,7 @@ async fn check_online(args: &Args) -> Result<()> {
     let apple_root = reqwest::Certificate::from_der(isideload::sideload::cert_identity::APPLE_ROOT)
         .map_err(|e| Fail::new("Couldn't load Apple's root certificate.", e.to_string()))?;
     let client = reqwest::Client::builder()
-        .user_agent(format!("siboot/{}", crate::VERSION))
+        .user_agent(format!("ssboot/{}", crate::VERSION))
         .timeout(Duration::from_secs(20))
         .add_root_certificate(apple_root)
         .build()
@@ -50,20 +50,21 @@ async fn check_online(args: &Args) -> Result<()> {
         .as_deref()
         .is_none_or(|ipa| ipa.starts_with("http"));
     if downloads {
-        let url = args.ipa.as_deref().unwrap_or(crate::sign::RELEASE_IPA);
-        ui::activity("reaching GitHub");
+        let url = args.ipa.as_deref().unwrap_or(crate::sign::NIGHTLY_IPA);
+        let what = if args.ipa.is_some() { "the SideStore IPA" } else { "SideStore's nightly" };
+        ui::activity(&format!("reaching {}", host_of(url)));
         match client.head(url).send().await {
             Ok(r) if r.status().is_success() => {
-                ui::ok("GitHub answers, and the SideInstaller release is there")
+                ui::ok(&format!("{} answers, and {what} is there", host_of(url)))
             }
-            Ok(r) => ui::warn(&format!(
-                "GitHub answered {} for the SideInstaller release.",
-                r.status()
-            )),
+            Ok(r) => ui::warn(&format!("{} answered {} for {what}.", host_of(url), r.status())),
             Err(e) => {
                 return Err(Fail::new(
-                    "Couldn't reach GitHub, where SideInstaller is downloaded from. Check the \
-                     internet connection.",
+                    format!(
+                        "Couldn't reach {}, where SideStore is downloaded from. Check the \
+                         internet connection.",
+                        host_of(url)
+                    ),
                     crate::error_text::error_text(&e),
                 ))
             }
@@ -88,6 +89,12 @@ async fn check_online(args: &Args) -> Result<()> {
     Ok(())
 }
 
+/// "github.com" for "https://github.com/SideStore/...".
+fn host_of(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    rest.split(['/', ':']).next().filter(|h| !h.is_empty()).unwrap_or(url)
+}
+
 pub struct Found {
     pub wire_version: i64,
     pub name: Option<String>,
@@ -110,7 +117,7 @@ pub async fn probe(addr: SocketAddr) -> Result<Found> {
             ))
         }
     };
-    let mut client = RemotePairingClient::new(RpPairingSocket::new(stream), "siboot");
+    let mut client = RemotePairingClient::new(RpPairingSocket::new(stream), "ssboot");
     let reply = match timeout(Duration::from_secs(10), client.attempt_pair_verify()).await {
         Ok(Ok(reply)) => reply,
         Ok(Err(e)) => {

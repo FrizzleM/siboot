@@ -1,4 +1,4 @@
-//! siboot's live screen through a made-up run, for working on the UI without
+//! ssboot's live screen through a made-up run, for working on the UI without
 //! an iPhone. Nothing here talks to a device or to Apple:
 //!
 //! ```sh
@@ -8,7 +8,7 @@
 //! cargo run --example screens -- --plain       # the same, as plain lines
 //! ```
 //!
-//! A run that stops at Connect then asks whether to copy the log, as siboot
+//! A run that stops at Connect then asks whether to copy the log, as ssboot
 //! does; on a Mac, yes puts it on the clipboard with `pbcopy`.
 //!
 //! The codes it asks for are 481516 (transfer) and 123456 (Apple's).
@@ -50,7 +50,7 @@ fn main() {
             )),
             _ => ui::warn("Couldn't copy the log: there's no pbcopy here."),
         }
-        ui::note("It's also in ~/.siboot/siboot.log.");
+        ui::note("It's also in ~/.ssboot/ssboot.log.");
     }
     ui::close();
     std::process::exit(code);
@@ -61,19 +61,19 @@ fn run(devmode: bool, stop: bool) -> bool {
         "Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover",
     ];
     if devmode {
-        ui::header("0.16.1", "Shows Developer Mode, or turns it on.");
+        ui::header("0.1.0", "Shows Developer Mode, or turns it on.");
         ui::plan(&["Check", "Pairing", "Connect", "Dev Mode"], 4);
     } else {
-        ui::header("0.16.1", "Installs SideInstaller on this iPhone.");
+        ui::header("0.1.0", "Installs SideStore on this iPhone.");
         ui::plan(&steps, 7);
     }
 
     ui::step(1, "Checking LocalDevVPN, this iPhone and the internet");
     for (what, took, answer) in [
         (
-            "reaching GitHub",
+            "reaching github.com",
             700,
-            "GitHub answers, and the SideInstaller release is there",
+            "github.com answers, and SideStore's nightly is there",
         ),
         (
             "reaching Apple's sign-in server",
@@ -114,7 +114,7 @@ fn run(devmode: bool, stop: bool) -> bool {
         }
         tries -= 1;
         if tries == 0 {
-            ui::failure("The transfer code didn't match. Run siboot again and type the code rootshell shows.", "");
+            ui::failure("The transfer code didn't match. Run ssboot again and type the code rootshell shows.", "");
             return false;
         }
         ui::warn(&format!(
@@ -158,10 +158,10 @@ fn run(devmode: bool, stop: bool) -> bool {
             "Without a passcode, this iPhone restarts right away to turn Developer Mode on, and \
              Minis stops with it. Once you unlock it, tap Turn On in the alert iOS shows.",
         );
-        ui::note("With a passcode, iOS refuses, and siboot shows the switch in Settings instead.");
+        ui::note("With a passcode, iOS refuses, and ssboot shows the switch in Settings instead.");
         if !ui::confirm("turn it on now?", false) {
             ui::failure(
-                "Nothing was sent, so Developer Mode stays off. `siboot developer-mode` without \
+                "Nothing was sent, so Developer Mode stays off. `ssboot developer-mode` without \
                  --turn-on only shows it in Settings, and restarts nothing.",
                 "",
             );
@@ -268,23 +268,30 @@ fn run(devmode: bool, stop: bool) -> bool {
     ui::ok(&format!("signed in as {email} — team Frizzle (ABCDE12345)"));
     ui::done("team Frizzle (ABCDE12345)");
 
-    ui::step(5, "Signing SideInstaller for this iPhone");
-    ui::status("downloading SideInstaller");
-    let total: u64 = 24 * 1_048_576 + 400_000;
+    ui::step(5, "Signing SideStore for this iPhone");
+    ui::status("downloading SideStore");
+    let total: u64 = 30_681_634;
     for i in 0..=60u64 {
         ui::progress("downloaded", total * i / 60, total);
         wait(45);
     }
     ui::progress_end();
-    ui::ok("downloaded SideInstaller (24.4 MB)");
+    ui::ok("downloaded SideStore (29.3 MB)");
+    ui::activity("checking it's SideStore");
+    wait(600);
+    ui::ok("it's SideStore 0.7.0-20261027.1507");
     ui::status("signing; this takes a while here");
     wait(4200);
-    ui::ok("signed SideInstaller as com.frizzlem.sideinstaller.ABCDE12345");
-    ui::done("SideInstaller 1.7.0 signed");
+    ui::ok("signed SideStore as com.SideStore.SideStore.ABCDE12345");
+    ui::detail(
+        "this build asks for a password before it takes a certificate file, so it's given none, \
+         as SideInstaller does",
+    );
+    ui::done("SideStore 0.7.0-20261027.1507");
 
     ui::step(6, "Installing it");
-    let total: u64 = 51 * 1_048_576;
-    ui::status("uploading 412 files (51.0 MB)");
+    let total: u64 = 46 * 1_048_576 + 600_000;
+    ui::status("uploading 158 files (46.6 MB)");
     for i in 0..=80u64 {
         ui::progress("uploaded", total * i / 80, total);
         wait(50);
@@ -298,20 +305,33 @@ fn run(devmode: bool, stop: bool) -> bool {
         wait(70);
     }
     ui::progress_end();
-    ui::ok("SideInstaller installed (com.frizzlem.sideinstaller.ABCDE12345)");
-    ui::done("installed · 51.0 MB, 412 files");
+    ui::ok("SideStore installed (com.SideStore.SideStore.ABCDE12345)");
+    ui::done("installed · 46.6 MB, 158 files");
 
-    ui::step(7, "Handing SideInstaller the pairing");
-    ui::activity("writing the pairing file into it");
+    ui::step(7, "Handing SideStore the pairing");
+    ui::activity("opening SideStore's container");
+    wait(500);
+    ui::activity("writing the pairing files into it");
     wait(900);
-    ui::done("SideInstaller has the pairing");
+    ui::ok("pairing files written into SideStore (2 of them, each read back)");
+    ui::activity("setting SideStore to load them");
+    wait(500);
+    ui::ok("SideStore loads the RPPairing file from its first launch");
+    ui::ok(
+        "SideStore's anisette set as its users get past -80046: on-device anisette off, \
+         auto-rotation off, server SideStore (New)",
+    );
+    ui::done("SideStore has the pairing");
 
     ui::finish(
-        "SideInstaller is installed",
+        "SideStore is installed",
         &[
-            "Open it from your Home Screen. The first time, iOS asks you to trust your Apple \
-             Account: Settings › General › VPN & Device Management.",
-            "Free accounts' apps last 7 days; SideInstaller can renew itself from then on.",
+            "Open SideStore from your Home Screen. The first time, iOS asks you to trust your \
+             Apple Account: Settings › General › VPN & Device Management.",
+            "It has this iPhone's pairing already. Sign in to it with the same Apple Account, and \
+             keep LocalDevVPN connected while it installs or refreshes apps.",
+            "If it offers to resign itself when you sign in, let it.",
+            "Free accounts' apps last 7 days: refresh them in SideStore before then.",
         ],
     );
     true

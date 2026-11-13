@@ -1,19 +1,21 @@
-//! Step 2: the pairing, made by siboot-pair in rootshell.
+//! Step 2: the pairing, made by ssboot-pair in rootshell.
 //!
 //! From iOS 27 an iPhone pair-sets-up only with a host it dials itself: one
 //! advertising `_remotepairing-pairable-host._tcp`, which Settings › Privacy &
 //! Security › Developer Mode lists as "Pair with …". Minis's App Store build
-//! can't advertise that; rootshell (App Store) can, so its siboot-pair
+//! can't advertise that; rootshell (App Store) can, so its ssboot-pair
 //! (../rootshell) pairs and then offers the pairing file on this iPhone's own
 //! loopback, behind the 6-digit transfer code it shows.
 //!
-//! The file siboot saved on an earlier run comes first, while the iPhone
-//! accepts it: siboot-pair keeps its host identity, so pairing again there
+//! The file ssboot saved on an earlier run comes first, while the iPhone
+//! accepts it: ssboot-pair keeps its host identity, so pairing again there
 //! doesn't change it, and rootshell's offer is only needed the first time.
+//! Next comes the file siboot saved, if it ran in this Minis: siboot-pair made
+//! it the same way, so the iPhone takes it as well, and ssboot keeps a copy.
 //! Either way the iPhone has to accept the file before anything is signed.
 
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use idevice::remote_pairing::RpPairingFile;
@@ -24,29 +26,46 @@ use tokio::time::timeout;
 use crate::fail::{Fail, Result};
 use crate::{tunnel, ui, Args};
 
-/// Where siboot-pair offers the file (rootshell/src/main.rs, `HANDOFF_PORT`).
+/// Where ssboot-pair offers the file (rootshell/src/main.rs, `HANDOFF_PORT`).
 const HANDOFF_PORT: u16 = 61207;
-/// Codes typed before siboot gives up. siboot-pair ends its offer after five.
+/// Codes typed before ssboot gives up. ssboot-pair ends its offer after five.
 const CODE_TRIES: u32 = 3;
 /// Far larger than a pairing file, which is about 1 KB.
 const MAX_FILE: usize = 64 * 1024;
-/// How long siboot-pair may take to answer a code. It answers at once while
+/// How long ssboot-pair may take to answer a code. It answers at once while
 /// rootshell runs, so silence means iOS has paused it.
 const ANSWER_WAIT: Duration = Duration::from_secs(20);
 
 /// How to make the pairing, for when there's none to take.
 pub const ROOTSHELL_ROUTE: &str = "Pair in rootshell (App Store) first: turn on its Settings › \
      Location Diary Mode › Session Only, then run in its local shell, one line at a time: \
-     `curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/main/rootshell/bin/siboot-pair.wasm`, \
-     `ifconfig en0 > ifconfig.txt`, `./siboot-pair.wasm`. Once it has paired, leave it running \
-     and run siboot here again: it asks for the transfer code rootshell shows.";
+     `curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/rootshell/bin/ssboot-pair.wasm`, \
+     `ifconfig en0 > ifconfig.txt`, `./ssboot-pair.wasm`. Once it has paired, leave it running \
+     and run ssboot here again: it asks for the transfer code rootshell shows.";
 
 /// Where the pairing that works came from.
 pub enum Source {
     /// The file saved on an earlier run.
     Saved,
-    /// siboot-pair's offer in rootshell.
+    /// The file siboot saved, now copied.
+    Siboot,
+    /// ssboot-pair's offer in rootshell.
     Rootshell,
+}
+
+/// The pairing file siboot keeps, to try when ssboot has none that works.
+/// None when `--pairing-file` names one, which is then the only one tried.
+fn siboot_file(args: &Args, ours: &Path) -> Option<PathBuf> {
+    if args.pairing_file.is_some() {
+        return None;
+    }
+    let theirs = crate::siboot_home()?.join("rp_pairing_file.plist");
+    let bytes = std::fs::read(&theirs).ok()?;
+    // Already ours: it was tried above.
+    if theirs == ours || std::fs::read(ours).ok().as_deref() == Some(&bytes[..]) {
+        return None;
+    }
+    Some(theirs)
 }
 
 pub async fn ensure(args: &Args, path: &Path) -> Result<Source> {
@@ -59,9 +78,27 @@ pub async fn ensure(args: &Args, path: &Path) -> Result<Source> {
                 return Ok(Source::Saved);
             }
             Err(f) => {
-                ui::note("This iPhone doesn't accept the saved pairing file, so siboot takes the one from rootshell.");
+                ui::note("This iPhone doesn't accept the saved pairing file, so ssboot takes another.");
                 ui::detail(&f.raw);
                 saved_refused = Some(f);
+            }
+        }
+    }
+    if let Some(theirs) = siboot_file(args, path) {
+        ui::activity("trying the pairing file siboot saved");
+        match tunnel::verify(args.device, &theirs).await {
+            Ok(()) => {
+                let file = std::fs::read(&theirs).map_err(|e| {
+                    Fail::new(format!("Couldn't read {}.", theirs.display()), e.to_string())
+                })?;
+                save(path, &file)?;
+                ui::ok("this iPhone accepts the pairing file siboot saved, so ssboot keeps a copy");
+                return Ok(Source::Siboot);
+            }
+            Err(f) => {
+                ui::note("This iPhone doesn't accept the pairing file siboot saved either.");
+                ui::detail(&f.raw);
+                saved_refused.get_or_insert(f);
             }
         }
     }
@@ -89,15 +126,16 @@ pub async fn ensure(args: &Args, path: &Path) -> Result<Source> {
     Ok(Source::Rootshell)
 }
 
-/// siboot-pair's answer to one code.
+/// ssboot-pair's answer to one code.
 enum Reply {
     File(Vec<u8>),
     WrongCode,
     Unexpected(String),
 }
 
-/// Send one code on `stream` and read siboot-pair's answer: `NO`, or
-/// `OK <length>` and the file.
+/// Send one code on `stream` and read ssboot-pair's answer: `NO`, or
+/// `OK <length>` and the file. The request still says `SIBOOT1`: siboot-pair
+/// and ssboot-pair offer the same file the same way, so either serves either.
 async fn exchange(stream: &mut TcpStream, code: &str) -> std::io::Result<Reply> {
     stream.write_all(format!("SIBOOT1 {code}\n").as_bytes()).await?;
     let mut reader = BufReader::new(stream);
@@ -123,7 +161,7 @@ async fn exchange(stream: &mut TcpStream, code: &str) -> std::io::Result<Reply> 
     Ok(Reply::File(file))
 }
 
-/// Take the pairing file siboot-pair is offering at `offer`, for the transfer
+/// Take the pairing file ssboot-pair is offering at `offer`, for the transfer
 /// code it shows, into `path`. The code proves the request comes from the
 /// person at the iPhone, not another app. False when nothing is offering one,
 /// or no code was typed. Each answer may take up to `wait`.
@@ -144,14 +182,14 @@ async fn take(
         };
         let code: String = typed.chars().filter(char::is_ascii_digit).collect();
         ui::activity("sending the code to rootshell");
-        // siboot-pair answers one request per connection.
+        // ssboot-pair answers one request per connection.
         if attempt > 1 {
             stream = match connect().await {
                 Ok(Ok(s)) => s,
                 _ => {
                     return Err(Fail::new(
-                        "rootshell stopped offering the pairing file. Run `./siboot-pair.wasm` in \
-                         rootshell again, then siboot here.",
+                        "rootshell stopped offering the pairing file. Run `./ssboot-pair.wasm` in \
+                         rootshell again, then ssboot here.",
                         "",
                     ))
                 }
@@ -162,13 +200,13 @@ async fn take(
                 return Err(Fail::new(
                     "rootshell didn't answer: iOS has probably paused it. Check its Settings › \
                      Location Diary Mode is on Session Only, open rootshell for a moment, then \
-                     come back here and run siboot again.",
+                     come back here and run ssboot again.",
                     format!("no answer on {offer} within {} s", wait.as_secs()),
                 ))
             }
             Ok(Err(e)) => {
                 return Err(Fail::new(
-                    "The hand-over from rootshell broke off. Run siboot again.",
+                    "The hand-over from rootshell broke off. Run ssboot again.",
                     e.to_string(),
                 ))
             }
@@ -196,7 +234,7 @@ async fn take(
         return Ok(true);
     }
     Err(Fail::new(
-        "The transfer code didn't match. Run siboot again and type the code rootshell shows.",
+        "The transfer code didn't match. Run ssboot again and type the code rootshell shows.",
         "",
     ))
 }
@@ -219,23 +257,22 @@ fn save(path: &Path, file: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use tokio::net::TcpListener;
 
     const QUICK: Duration = Duration::from_secs(5);
 
     fn temp_home(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("siboot-test-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ssboot-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     fn a_pairing_file() -> Vec<u8> {
-        RpPairingFile::generate("siboot test").to_bytes()
+        RpPairingFile::generate("ssboot test").to_bytes()
     }
 
-    /// siboot-pair's side of the hand-off (rootshell/src/main.rs, `offer`):
+    /// ssboot-pair's side of the hand-off (rootshell/src/main.rs, `offer`):
     /// one request per connection, `NO` for a wrong code.
     async fn rootshell_offering(code: &'static str, file: Vec<u8>) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -306,7 +343,7 @@ mod tests {
         assert!(!path.exists());
     }
 
-    /// What siboot met on the iPhone with rootshell in the background: the
+    /// What ssboot met on the iPhone with rootshell in the background: the
     /// connection goes through, and then nothing answers.
     #[tokio::test]
     async fn a_rootshell_that_never_answers_is_given_up_on() {

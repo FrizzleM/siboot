@@ -121,11 +121,11 @@ pub mod tests {
 
     #[test]
     fn the_announcement_carries_ptr_srv_txt_and_a() {
-        let txt = vec![("name".to_string(), "siboot".to_string()), ("ver".to_string(), "26".to_string())];
+        let txt = vec![("name".to_string(), "ssboot".to_string()), ("ver".to_string(), "26".to_string())];
         let ad = Advert {
             service: PAIRABLE_HOST_TYPE,
             instance: "ABC-123",
-            host: "siboot-abc.local",
+            host: "ssboot-abc.local",
             ip: [192, 168, 1, 20],
             port: 51234,
             txt: &txt,
@@ -139,9 +139,9 @@ pub mod tests {
         assert_eq!(records[0].4, name(full));
         assert_eq!((records[1].0.as_str(), records[1].1, records[1].2), (full, SRV, 0x8001));
         assert_eq!(&records[1].4[4..6], &51234u16.to_be_bytes());
-        assert_eq!(&records[1].4[6..], name("siboot-abc.local").as_slice());
-        assert_eq!(records[2].4, b"\x0bname=siboot\x06ver=26");
-        assert_eq!((records[3].0.as_str(), records[3].1), ("siboot-abc.local", A));
+        assert_eq!(&records[1].4[6..], name("ssboot-abc.local").as_slice());
+        assert_eq!(records[2].4, b"\x0bname=ssboot\x06ver=26");
+        assert_eq!((records[3].0.as_str(), records[3].1), ("ssboot-abc.local", A));
         assert_eq!(records[3].4, vec![192, 168, 1, 20]);
         assert!(records.iter().all(|r| r.3 == TTL));
         assert!(parse(&announcement(&ad, 0)).iter().all(|r| r.3 == 0), "goodbye");

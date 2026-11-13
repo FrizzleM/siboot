@@ -28,7 +28,7 @@ use crate::fail::{chain, Fail, Result};
 use crate::ui;
 
 /// The name this host gives in its messages to the device.
-const HOSTNAME: &str = "siboot";
+const HOSTNAME: &str = "ssboot";
 
 /// A tunnel with its RSD handshake: what every service connects through.
 pub struct Connection {
@@ -97,13 +97,13 @@ pub async fn open(addr: SocketAddr, path: &Path) -> Result<Connection> {
     .await?;
     let client_ip: IpAddr = tunnel.info.client_address.parse().map_err(|e| {
         Fail::new(
-            "The tunnel reported an address siboot can't read.",
+            "The tunnel reported an address ssboot can't read.",
             format!("{e}"),
         )
     })?;
     let server_ip: IpAddr = tunnel.info.server_address.parse().map_err(|e| {
         Fail::new(
-            "The tunnel reported an address siboot can't read.",
+            "The tunnel reported an address ssboot can't read.",
             format!("{e}"),
         )
     })?;
@@ -190,7 +190,7 @@ async fn read_pairing(path: &Path) -> Result<RpPairingFile> {
     RpPairingFile::read_from_file(path).await.map_err(|e| {
         Fail::new(
             format!(
-                "Couldn't read the pairing file at {}. Pair again in rootshell (`./siboot-pair.wasm`), then run siboot again.",
+                "Couldn't read the pairing file at {}. Pair again in rootshell (`./ssboot-pair.wasm`), then run ssboot again.",
                 path.display()
             ),
             chain(&e),
@@ -227,7 +227,7 @@ async fn pair_verified(
         Ok(Ok(())) => Ok(rpc),
         Ok(Err(e)) => Err(Fail::new(
             "This iPhone doesn't accept the pairing file (it was removed in Settings, or the \
-             iPhone was reset). Pair again in rootshell (`./siboot-pair.wasm`), then run siboot again.",
+             iPhone was reset). Pair again in rootshell (`./ssboot-pair.wasm`), then run ssboot again.",
             chain(&e),
         )),
         Err(_) => Err(Fail::new(

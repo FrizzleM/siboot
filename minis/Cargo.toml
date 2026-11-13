@@ -1,13 +1,13 @@
 [package]
-name = "siboot"
-version = "0.16.1"
+name = "ssboot"
+version = "0.1.0"
 edition = "2021"
-description = "PC-free bootstrap that installs SideInstaller onto the iPhone it runs on, from Open Minis's Linux shell, with the pairing made in rootshell"
+description = "PC-free bootstrap that installs SideStore onto the iPhone it runs on, from Open Minis's Linux shell, with the pairing made in rootshell"
 license = "MIT"
 publish = false
 
 [[bin]]
-name = "siboot"
+name = "ssboot"
 path = "src/main.rs"
 
 # Its own workspace: this crate builds for
@@ -24,8 +24,8 @@ path = "src/main.rs"
 #   rsd / xpc / tcp    RemoteServiceDiscovery inside the tunnel
 #   afc                /PublicStaging upload
 #   installation_proxy the install
-#   house_arrest       writing the pairing file into SideInstaller's container
-#   amfi               `siboot developer-mode`
+#   house_arrest       writing the pairing into SideStore's container
+#   amfi               `ssboot developer-mode`
 # `aws-lc`, as rust-core: aarch64 musl is a supported aws-lc target.
 idevice = { path = "../SideInstaller/rust-core/vendor/idevice", default-features = false, features = [
   "aws-lc",
@@ -60,8 +60,8 @@ tokio = { version = "1", features = [
 plist = "1.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Downloading the SideInstaller release. Same line isideload uses, so it adds
-# nothing to the tree.
+# Downloading SideStore. Same line isideload uses, so it adds nothing to the
+# tree.
 reqwest = { version = "0.13", features = ["json", "gzip"] }
 # Named by rust-core's apple_session.rs, which this crate compiles as its own
 # (see main.rs). Same versions as rust-core.
@@ -70,6 +70,12 @@ sha2 = "0.11"
 hex = "0.4"
 # No-echo password read from the terminal, for plain output.
 rpassword = "7"
+# Account.sideconf's fields, reading the IPA before signing it, and looking
+# for what a SideStore build reads in its binary. All three are in the tree
+# already, through isideload and its dependencies, at these versions.
+base64 = "0.22.1"
+zip = { version = "8.3", default-features = false, features = ["deflate"] }
+memchr = "2"
 # The live screen: the terminal's size, and keys one at a time (termios). Already
 # in the tree through tokio and rpassword.
 libc = "0.2"

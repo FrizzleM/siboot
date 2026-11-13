@@ -5,15 +5,28 @@
 //! GrandSlam sign-in with two-factor, the -80046 skip for Android-ADI servers,
 //! and the current-Mac identity rules. What's added is the terminal: the
 //! prompts, and the order servers are tried in.
+//!
+//! The first time, ssboot starts from what siboot saved in the same Minis, if
+//! it did: its signing key and certificate, anisette identity and sign-in. One
+//! certificate then signs SideInstaller and SideStore alike, instead of a
+//! second one taking a free account's last place, or making ssboot ask which
+//! to revoke.
+//!
+//! Also here: `Account.sideconf`, the signing certificate as SideStore imports
+//! it, built as rust-core's `account_config` builds it.
 
 use std::path::{Path, PathBuf};
 
+use base64::{prelude::BASE64_STANDARD, Engine as _};
+use isideload::anisette::remote_v3::{state::AnisetteState, state_key_for};
 use isideload::auth::apple_account::{TwoFactorCallbackParams, TwoFactorCallbackResponse};
 use isideload::dev::certificates::DevelopmentCertificate;
 use isideload::sideload::builder::MaxCertsBehavior;
+use isideload::sideload::cert_identity::CertificateIdentity;
 use isideload::sideload::sideloader::Sideloader;
 use isideload::sideload::{SideloaderBuilder, TeamSelection};
 use isideload::util::fs_storage::FsStorage;
+use isideload::util::storage::SideloadingStorage;
 use rootcause::Report;
 
 use crate::apple_session;
@@ -35,19 +48,24 @@ pub const SERVERS: &[&str] = &[
 ];
 
 /// The name the signing certificate is made for, as Xcode names a Mac's.
-const MACHINE_NAME: &str = "siboot";
+const MACHINE_NAME: &str = "ssboot";
 
 pub struct Session {
     pub sideloader: Sideloader,
     /// The developer team signing for it, as "name (ID)".
     pub team: String,
+    /// isideload's store: the signing key, anisette identities, saved sign-in.
+    storage: PathBuf,
+    /// The anisette server signed in through. Each server family keeps its
+    /// own identity, and a hand-off carries the one the token was issued to.
+    anisette_url: String,
 }
 
 pub async fn sign_in(args: &Args) -> Result<Session> {
     let apple_id = match args
         .apple_id
         .clone()
-        .or_else(|| std::env::var("SIBOOT_APPLE_ID").ok())
+        .or_else(|| std::env::var("SSBOOT_APPLE_ID").ok())
     {
         Some(id) => id,
         None => ui::ask_text(
@@ -62,7 +80,7 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
     if apple_id.is_empty() {
         return Err(Fail::by_user("No Apple Account given."));
     }
-    let password = match std::env::var("SIBOOT_PASSWORD") {
+    let password = match std::env::var("SSBOOT_PASSWORD") {
         Ok(p) if !p.is_empty() => p,
         _ => ui::ask_secret(
             "sign in to your Apple Account",
@@ -83,6 +101,9 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
     }
 
     let storage = args.home.join("isideload");
+    if let Some(siboot) = crate::siboot_home() {
+        start_from_siboot(&siboot, &args.home);
+    }
     std::fs::create_dir_all(&storage).map_err(|e| {
         Fail::new(
             format!("Couldn't create {}.", storage.display()),
@@ -124,7 +145,12 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
                     team.team_id
                 );
                 ui::ok(&format!("signed in — team {team}"));
-                return Ok(Session { sideloader, team });
+                return Ok(Session {
+                    sideloader,
+                    team,
+                    storage,
+                    anisette_url: server.clone(),
+                });
             }
             Err(e) => {
                 if let Some(advice) = stops_sign_in(&e) {
@@ -181,6 +207,114 @@ fn remember_server(home: &Path, server: &str) {
     let _ = std::fs::write(last_server_path(home), server);
 }
 
+/// When ssboot has no isideload store yet and siboot's folder (`siboot`) has
+/// one, starts from a copy of it, and of the anisette server that last
+/// worked. Returns how many files were copied, or None when nothing was.
+fn start_from_siboot(siboot: &Path, home: &Path) -> Option<usize> {
+    let ours = home.join("isideload");
+    let theirs = siboot.join("isideload");
+    if siboot == home || ours.exists() || !theirs.is_dir() {
+        return None;
+    }
+    match copy_dir(&theirs, &ours) {
+        Ok(0) => {
+            let _ = std::fs::remove_dir_all(&ours);
+            None
+        }
+        Ok(files) => {
+            if !last_server_path(home).exists() {
+                if let Some(server) = last_server(siboot) {
+                    remember_server(home, &server);
+                }
+            }
+            ui::ok("starting from the signing certificate and sign-in siboot saved");
+            ui::detail(&format!("copied {files} files from {}", theirs.display()));
+            Some(files)
+        }
+        Err(e) => {
+            // Half a store is worse than none: isideload starts a fresh one.
+            let _ = std::fs::remove_dir_all(&ours);
+            ui::note("Couldn't copy what siboot saved, so ssboot starts afresh.");
+            ui::detail(&e.to_string());
+            None
+        }
+    }
+}
+
+/// Copies the folder `from` to `to`, which mustn't exist yet, keeping each
+/// file's permissions: the store holds private keys. Returns the files copied.
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<usize> {
+    std::fs::create_dir_all(to)?;
+    let mut files = 0;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            files += copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+            files += 1;
+        }
+    }
+    Ok(files)
+}
+
+/// `Account.sideconf`: the JSON SideStore imports on launch and then deletes
+/// (`LaunchViewController.detectAndImportAccountFile`), as rust-core's
+/// `account_config` builds it. SideStore can sign only with a certificate
+/// whose private key it has; without this it makes its own the first time you
+/// sign in to it.
+///
+/// The certificate goes in as a PKCS#12 archive whose password is its machine
+/// ID, as AltStore-family apps expect, with the anisette identity this session
+/// signed in with. No password: SideStore asks for it anyway. Only looks up the
+/// certificate signing made, never creates or revokes one.
+pub async fn account_config(session: &mut Session) -> std::result::Result<String, String> {
+    let storage = FsStorage::new(session.storage.clone());
+    let key = state_key_for(&storage, &session.anisette_url);
+    let raw = storage
+        .retrieve_data(&key)
+        .map_err(|e| format!("could not read the anisette state: {e}"))?
+        .ok_or("no anisette state stored yet")?;
+    let state: AnisetteState =
+        plist::from_bytes(&raw).map_err(|e| format!("could not parse the anisette state: {e}"))?;
+    let adi_pb = state
+        .adi_pb
+        .clone()
+        .ok_or("the anisette identity was never provisioned")?;
+
+    let team = session
+        .sideloader
+        .get_team()
+        .await
+        .map_err(|e| format!("get_team: {}", crate::error_text::report_text(&e)))?;
+    let email = session.sideloader.get_email().to_string();
+    let identity = CertificateIdentity::retrieve_existing(
+        &email,
+        session.sideloader.get_dev_session(),
+        &team,
+        &storage,
+    )
+    .await
+    .map_err(|e| format!("certificate lookup failed: {}", crate::error_text::report_text(&e)))?
+    .ok_or("no certificate for ssboot's signing key on this Apple Account yet")?;
+    let password = identity.machine_id.clone();
+    let p12 = identity
+        .as_p12(&password)
+        .await
+        .map_err(|e| format!("failed to build the PKCS#12 archive: {e}"))?;
+    Ok(serde_json::json!({
+        "version": "2.0",
+        "email": email,
+        "certificateData": BASE64_STANDARD.encode(&p12),
+        "certType": "encrypted",
+        "certificatePassword": password,
+        "anisetteIdentifier": BASE64_STANDARD.encode(state.keychain_identifier),
+        "anisetteAdiBlob": BASE64_STANDARD.encode(adi_pb),
+    })
+    .to_string())
+}
+
 /// The user said no to every way of getting the code: not a problem to log.
 const CANCELLED: &str = "Sign-in cancelled.";
 
@@ -193,13 +327,13 @@ fn stops_sign_in(error: &str) -> Option<&'static str> {
         .any(|c| error.contains(c))
     {
         return Some(
-            "Apple rejected the Apple Account or password. Check them and run siboot again. If \
+            "Apple rejected the Apple Account or password. Check them and run ssboot again. If \
              you're sure they're right, Apple may be limiting sign-ins: wait a while first.",
         );
     }
     if error.contains("429") || error.to_ascii_lowercase().contains("too many") {
         return Some(
-            "Apple is limiting sign-in attempts for now. Wait a while, then run siboot again.",
+            "Apple is limiting sign-in attempts for now. Wait a while, then run ssboot again.",
         );
     }
     if error.contains("No 2FA") {
@@ -443,7 +577,7 @@ fn choose_certificates_to_revoke(certs: &Vec<DevelopmentCertificate>) -> Option<
         }
         ui::warn(
             "This Apple Account already has as many signing certificates as Apple allows, so one \
-             must be revoked to make siboot's. Apps signed with a revoked certificate stop \
+             must be revoked to make ssboot's. Apps signed with a revoked certificate stop \
              opening, on every device, until they're signed again. This can't be undone.",
         );
         let mut labels: Vec<String> = certs
@@ -471,7 +605,7 @@ fn choose_certificates_to_revoke(certs: &Vec<DevelopmentCertificate>) -> Option<
 fn choose_certificates_plain(certs: &[DevelopmentCertificate]) -> Option<Vec<String>> {
     println!();
     ui::warn("This Apple Account already has as many signing certificates as Apple allows,");
-    ui::warn("so one must be revoked to make siboot's. Apps signed with a revoked certificate");
+    ui::warn("so one must be revoked to make ssboot's. Apps signed with a revoked certificate");
     ui::warn("stop opening, on every device, until they're signed again. This can't be undone.");
     for (i, cert) in certs.iter().enumerate() {
         ui::status(&format!(
@@ -538,6 +672,47 @@ mod tests {
             ),
             ["https://example.org"]
         );
+    }
+
+    #[test]
+    fn a_first_run_starts_from_what_siboot_saved_once() {
+        let root = std::env::temp_dir().join(format!("ssboot-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let siboot = root.join(".siboot");
+        let home = root.join(".ssboot");
+        std::fs::create_dir_all(siboot.join("isideload/keys")).unwrap();
+        std::fs::write(siboot.join("isideload/keys/key.pem"), b"key").unwrap();
+        std::fs::write(siboot.join("isideload/state"), b"state").unwrap();
+        std::fs::write(siboot.join("anisette-server"), "https://ani.iloader.app\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let key = siboot.join("isideload/keys/key.pem");
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+
+        assert_eq!(start_from_siboot(&siboot, &home), Some(2));
+        assert_eq!(std::fs::read(home.join("isideload/keys/key.pem")).unwrap(), b"key");
+        assert_eq!(last_server(&home).as_deref(), Some("https://ani.iloader.app"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(home.join("isideload/keys/key.pem"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "a private key stays private");
+        }
+
+        // Once ssboot has its own, it keeps it.
+        std::fs::write(siboot.join("isideload/state"), b"newer").unwrap();
+        assert_eq!(start_from_siboot(&siboot, &home), None);
+        assert_eq!(std::fs::read(home.join("isideload/state")).unwrap(), b"state");
+
+        // Nothing saved, nothing copied; and never from itself.
+        assert_eq!(start_from_siboot(&root.join("none"), &root.join("other")), None);
+        assert!(!root.join("other/isideload").exists());
+        assert_eq!(start_from_siboot(&siboot, &siboot), None);
     }
 
     #[test]

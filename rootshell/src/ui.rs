@@ -1,4 +1,4 @@
-//! siboot-pair's screen, for rootshell's terminal (Ghostty).
+//! ssboot-pair's screen, for rootshell's terminal (Ghostty).
 //!
 //! A WASM program there can't ask the terminal its size, runs on one thread
 //! and blocks in every socket call. So the screen is made of what holds up
@@ -121,7 +121,7 @@ impl Mark {
         }
     }
 
-    /// Plain output's, as siboot-pair always printed them.
+    /// Plain output's, as ssboot-pair always printed them.
     fn word(self) -> &'static str {
         match self {
             Mark::Good => "OK",
@@ -200,22 +200,22 @@ impl Screen {
 
 /// The name and version, and what it does.
 pub fn header(version: &str) {
-    record(&format!("siboot-pair {version} log"));
+    record(&format!("ssboot-pair {version} log"));
     let mut s = screen();
     let lines = if s.fancy {
         let mut lines = vec![
             String::new(),
             format!(
                 "  {} {}",
-                s.paint(BADGE, " siboot-pair "),
+                s.paint(BADGE, " ssboot-pair "),
                 s.paint(DIM, version)
             ),
         ];
-        lines.extend(s.hanging("  ", 2, "", "Pairs this iPhone with itself, for siboot."));
+        lines.extend(s.hanging("  ", 2, "", "Pairs this iPhone with itself, for ssboot."));
         lines
     } else {
         vec![format!(
-            "siboot-pair {version} — pairs this iPhone with itself"
+            "ssboot-pair {version} — pairs this iPhone with itself"
         )]
     };
     s.emit(&lines);
@@ -284,7 +284,7 @@ pub fn blank() {
     screen().emit(&[String::new()]);
 }
 
-/// The live line: what siboot-pair is waiting for now.
+/// The live line: what ssboot-pair is waiting for now.
 pub fn live(text: &str) {
     record(&format!(" … {text}"));
     screen().set_live("◆", STRONG, text);
@@ -569,7 +569,7 @@ mod tests {
         big("975310");
         stopped("the log test ended.");
         let log = recorded().join("\n");
-        assert!(log.contains("siboot-pair 9.9.9 log"), "{log}");
+        assert!(log.contains("ssboot-pair 9.9.9 log"), "{log}");
         assert_eq!(log.matches("Waiting for the log test").count(), 1, "{log}");
         assert!(!log.contains("975310") && !log.contains("975 310"), "{log}");
         assert!(log.contains("Stopped: the log test ended."), "{log}");

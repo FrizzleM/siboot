@@ -1,27 +1,27 @@
 #!/bin/sh
-# Installs siboot into Open Minis and runs it, which takes the pairing from
-# siboot-pair in rootshell, signs SideInstaller with your Apple Account and
+# Installs ssboot into Open Minis and runs it, which takes the pairing from
+# ssboot-pair in rootshell, signs SideStore with your Apple Account and
 # installs it.
 #
-# In Minis's terminal (Minis › Settings › Terminal), with siboot-pair still
+# In Minis's terminal (Minis › Settings › Terminal), with ssboot-pair still
 # running in rootshell:
 #
-#   wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
+#   wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/minis/install.sh | sh
 #
-# Afterwards `siboot` runs it again, without downloading.
+# Afterwards `ssboot` runs it again, without downloading.
 set -eu
 
-BASE="${SIBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/main/minis}"
-# Of bin/siboot-aarch64, updated with it: a download that doesn't match (an
+BASE="${SSBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/minis}"
+# Of bin/ssboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run. SIZE only draws the progress
 # bar.
-SHA256="f643902d57176a1be6abbb67e46cc3e298cc3e372b48c0ee1542459876421f2a"
-SIZE=11422096
+SHA256="0c1ffc34d13a601a1aeacee281d10965f363b2380fbd280f5a5e214b08805ba3"
+SIZE=11618736
 
-DIR="$HOME/.siboot/bin"
-BIN="$DIR/siboot"
+DIR="$HOME/.ssboot/bin"
+BIN="$DIR/ssboot"
 
-# On a terminal, one line that redraws itself, as siboot's own screen does.
+# On a terminal, one line that redraws itself, as ssboot's own screen does.
 FANCY=
 if [ -t 1 ] && [ "${TERM:-}" != dumb ] && [ -z "${NO_COLOR:-}" ]; then
   FANCY=1
@@ -60,7 +60,7 @@ fail() {
 
 case "$(uname -m)" in
   aarch64 | arm64) ;;
-  *) fail "siboot runs in Open Minis on an iPhone (aarch64); this is $(uname -m)." ;;
+  *) fail "ssboot runs in Open Minis on an iPhone (aarch64); this is $(uname -m)." ;;
 esac
 
 fetch() {
@@ -100,7 +100,7 @@ frame() {
   percent=$((have * 100 / SIZE))
   [ "$percent" -gt 99 ] && percent=99
   size=" $(megabytes "$have")/$(megabytes "$SIZE") MB"
-  # "  ⠋ Downloading siboot " and " 42%", a column spare.
+  # "  ⠋ Downloading ssboot " and " 42%", a column spare.
   cells=$((COLS - 29))
   if [ "$cells" -ge $((12 + ${#size})) ]; then
     cells=$((cells - ${#size}))
@@ -110,7 +110,7 @@ frame() {
   [ "$cells" -gt 24 ] && cells=24
   [ "$cells" -lt 4 ] && cells=4
   full=$((percent * cells / 100))
-  printf '\r\033[2K  \033[36m%s\033[0m Downloading siboot \033[36m%s\033[0m\033[2m%s\033[0m %3d%%%s' \
+  printf '\r\033[2K  \033[36m%s\033[0m Downloading ssboot \033[36m%s\033[0m\033[2m%s\033[0m %3d%%%s' \
     "$spin" "$(repeat "$full" ━)" "$(repeat $((cells - full)) ─)" "$percent" "$size"
 }
 
@@ -119,11 +119,11 @@ frame() {
 download() {
   rm -f "$BIN.part"
   if [ -z "$FANCY" ]; then
-    echo "downloading siboot ($(megabytes "$SIZE") MB) …"
-    fetch "$BASE/bin/siboot-aarch64" "$BIN.part"
+    echo "downloading ssboot ($(megabytes "$SIZE") MB) …"
+    fetch "$BASE/bin/ssboot-aarch64" "$BIN.part"
     return
   fi
-  fetch "$BASE/bin/siboot-aarch64" "$BIN.part" < /dev/null 2> /dev/null &
+  fetch "$BASE/bin/ssboot-aarch64" "$BIN.part" < /dev/null 2> /dev/null &
   pid=$!
   i=0
   while kill -0 "$pid" 2> /dev/null; do
@@ -137,28 +137,30 @@ download() {
 
 mkdir -p "$DIR"
 if [ -f "$BIN" ] && [ "$(sha "$BIN")" = "$SHA256" ]; then
-  ok "siboot is up to date"
+  ok "ssboot is up to date"
 else
   if ! download; then
     rm -f "$BIN.part"
-    fail "Couldn't download siboot. Check the internet connection and try again."
+    fail "Couldn't download ssboot. Check the internet connection and try again."
   fi
   if [ "$(sha "$BIN.part")" != "$SHA256" ]; then
     rm -f "$BIN.part"
-    fail "The siboot download didn't match its checksum. Try again in a few minutes."
+    fail "The ssboot download didn't match its checksum. Try again in a few minutes."
   fi
   chmod 755 "$BIN.part"
   mv "$BIN.part" "$BIN"
-  ok "siboot downloaded and checked ($(megabytes "$SIZE") MB)"
+  ok "ssboot downloaded and checked ($(megabytes "$SIZE") MB)"
 fi
 
-# So `siboot` works on its own from now on (Minis's shell runs as root).
-ln -sf "$BIN" /usr/local/bin/siboot 2> /dev/null || true
+# So `ssboot` works on its own from now on (Minis's shell runs as root).
+ln -sf "$BIN" /usr/local/bin/ssboot 2> /dev/null || true
 
-# Piped into sh, stdin is this script, and siboot's prompts need the terminal.
+# Piped into sh, stdin is this script, and ssboot's prompts need the terminal.
+# The test opens it in a subshell: a redirection that fails on `:`, a special
+# built-in, would end this shell, where there's no terminal at all.
 if [ -t 0 ]; then
   exec "$BIN" "$@"
-elif [ -r /dev/tty ] && { : < /dev/tty; } 2> /dev/null; then
+elif [ -r /dev/tty ] && (: < /dev/tty) 2> /dev/null; then
   exec "$BIN" "$@" < /dev/tty
 else
   exec "$BIN" "$@"

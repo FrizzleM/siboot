@@ -10,7 +10,7 @@ pub struct Fail {
     /// The underlying protocol or library error. Shown with `--verbose`.
     pub raw: String,
     /// The user stopped the run (Ctrl-C, nothing typed, a cancelled
-    /// sign-in): nothing went wrong, so siboot doesn't offer its log.
+    /// sign-in): nothing went wrong, so ssboot doesn't offer its log.
     pub by_user: bool,
 }
 

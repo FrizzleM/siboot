@@ -1,13 +1,13 @@
 [package]
-name = "siboot-pair"
-version = "0.4.0"
+name = "ssboot-pair"
+version = "0.1.0"
 edition = "2021"
-description = "siboot's pairing step for rootshell's WASM runtime: pairs the iPhone with itself from an App Store app"
+description = "ssboot's pairing step for rootshell's WASM runtime: pairs the iPhone with itself from an App Store app"
 license = "MIT"
 publish = false
 
 [[bin]]
-name = "siboot-pair"
+name = "ssboot-pair"
 path = "src/main.rs"
 
 # Its own workspace: builds for wasm32-wasip1 only.

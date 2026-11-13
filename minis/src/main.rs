@@ -1,34 +1,36 @@
-//! `siboot` for Open Minis: installs SideInstaller onto the iPhone it runs on,
-//! with no computer and no paid certificate.
+//! `ssboot` for Open Minis: installs SideStore onto the iPhone it runs on, with
+//! no computer and no paid certificate. It's siboot (which installs
+//! SideInstaller the same way) with SideStore in its place, installed and handed
+//! its pairing as SideInstaller installs it.
 //!
 //! Open Minis (App Store) runs Alpine Linux on an ARM64 build of iSH, so this is
 //! an ordinary static aarch64 Linux binary built on the same vendored idevice
 //! and isideload as SideInstaller. The pairing comes from rootshell, another
-//! App Store app: its siboot-pair (../rootshell) pairs this iPhone with itself
+//! App Store app: its ssboot-pair (../rootshell) pairs this iPhone with itself
 //! and hands the file over on the iPhone's loopback (see README.md).
 //!
 //! The steps:
 //! 1 check · 2 pairing · 3 connect · 4 Apple ID · 5 sign · 6 install · 7 hand over.
-//! `siboot developer-mode` runs 1–3, then asks for Developer Mode (devmode.rs).
+//! `ssboot developer-mode` runs 1–3, then asks for Developer Mode (devmode.rs).
 //!
 //! The Apple ID password goes only to Apple (as an SRP proof, via isideload) and
 //! is never written to disk or logged. Like SideInstaller, the developer token
-//! and signing key are kept, in ~/.siboot/isideload, so a second run needn't
+//! and signing key are kept, in ~/.ssboot/isideload, so a second run needn't
 //! sign in again.
 
 mod account;
 mod devmode;
 mod fail;
+mod handoff;
 mod install;
 mod pairing;
 mod preflight;
 mod report;
-mod seed;
 mod sign;
 mod tunnel;
 mod ui;
 
-// rust-core's saved-session sign-in, compiled here unchanged so siboot signs in
+// rust-core's saved-session sign-in, compiled here unchanged so ssboot signs in
 // exactly as SideInstaller does (anisette identity rules, -80046 skip, token
 // reuse). `crate::error_text` is the path it expects.
 #[allow(dead_code)]
@@ -81,7 +83,7 @@ pub struct Args {
     /// Plain lines, not the live screen.
     pub plain: bool,
     pub device: SocketAddr,
-    /// ~/.siboot: the pairing file, isideload's store, downloads.
+    /// ~/.ssboot: the pairing file, isideload's store, downloads.
     pub home: PathBuf,
     pub pairing_file: Option<PathBuf>,
     pub apple_id: Option<String>,
@@ -99,7 +101,13 @@ impl Args {
 
 fn default_home() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| ".".into());
-    home.join(".siboot")
+    home.join(".ssboot")
+}
+
+/// Where siboot, which installs SideInstaller the same way, keeps its files in
+/// this Minis: a pairing and a signing identity ssboot can start from.
+pub fn siboot_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".siboot"))
 }
 
 enum Parsed {
@@ -160,7 +168,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> std::result::Result<Par
         }
     }
     if args.turn_on && args.command != Command::DeveloperMode {
-        return Err("--turn-on goes with `siboot developer-mode`".into());
+        return Err("--turn-on goes with `ssboot developer-mode`".into());
     }
     Ok(Parsed::Run(args))
 }
@@ -174,17 +182,17 @@ fn usage() {
     println!(
         "\
 {name} {VERSION}
-Installs SideInstaller onto this iPhone, from
+Installs SideStore onto this iPhone, from
 Open Minis, with your own Apple Account.
 
 {usage}
-  siboot [command] [options]
+  ssboot [command] [options]
 
-  Pair in rootshell first (siboot-pair), and
+  Pair in rootshell first (ssboot-pair), and
   leave it running. With no command, every
   step runs: check, take the pairing from
   rootshell, connect, sign in, sign
-  SideInstaller, install it, and hand it the
+  SideStore, install it, and hand it the
   pairing.
 
 {commands}
@@ -201,17 +209,17 @@ Open Minis, with your own Apple Account.
       --turn-on, turn it on instead, after
       asking: the iPhone restarts. iOS allows
       that only without a passcode; with one,
-      siboot shows the switch instead.
+      ssboot shows the switch instead.
 
 {options}
   {apple_id}
       Apple Account to sign with (else
-      SIBOOT_APPLE_ID, else it asks). The
-      password comes from SIBOOT_PASSWORD or a
+      SSBOOT_APPLE_ID, else it asks). The
+      password comes from SSBOOT_PASSWORD or a
       prompt that shows only dots.
   {ipa}
-      Install this IPA instead of SideInstaller's
-      latest release.
+      Install this SideStore IPA instead of
+      SideStore's nightly.
   {anisette}
       Sign in through this anisette server only.
   {turn_on}
@@ -223,10 +231,10 @@ Open Minis, with your own Apple Account.
   {port}
       The iPhone's RPPairing port (default {rp}).
   {pairing_file}
-      Default ~/.siboot/rp_pairing_file.plist.
+      Default ~/.ssboot/rp_pairing_file.plist.
   {home}
-      Where siboot keeps its files (default
-      ~/.siboot).
+      Where ssboot keeps its files (default
+      ~/.ssboot).
   {plain}
       Plain lines instead of the live screen.
   {verbose}
@@ -238,8 +246,9 @@ Open Minis, with your own Apple Account.
 {needs}
   iOS 27 or later, Developer Mode on, Wi-Fi,
   LocalDevVPN (App Store) connected, and the
-  pairing from siboot-pair in rootshell.",
-        name = head("siboot"),
+  pairing from ssboot-pair in rootshell (or
+  the one siboot saved, if it ran here).",
+        name = head("ssboot"),
         usage = head("USAGE"),
         commands = head("COMMANDS"),
         options = head("OPTIONS"),
@@ -267,8 +276,8 @@ fn main() -> ExitCode {
     let parsed = match parse_args(std::env::args().skip(1)) {
         Ok(p) => p,
         Err(problem) => {
-            eprintln!("siboot: {problem}");
-            eprintln!("try `siboot --help`");
+            eprintln!("ssboot: {problem}");
+            eprintln!("try `ssboot --help`");
             return ExitCode::from(2);
         }
     };
@@ -278,7 +287,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Parsed::Version => {
-            println!("siboot {VERSION}");
+            println!("ssboot {VERSION}");
             return ExitCode::SUCCESS;
         }
         Parsed::Run(args) => args,
@@ -291,7 +300,7 @@ fn main() -> ExitCode {
         if args.command == Command::DeveloperMode {
             "Shows Developer Mode, or turns it on."
         } else {
-            "Installs SideInstaller on this iPhone."
+            "Installs SideStore on this iPhone."
         },
     );
 
@@ -396,7 +405,7 @@ async fn pipeline(args: &Args) -> Result<()> {
             ui::plan(&names, DEVMODE_STAGES);
         }
     }
-    // Before the request, a failure also says what siboot can't do without the
+    // Before the request, a failure also says what ssboot can't do without the
     // tunnel.
     let note = |f: Fail| if devmode { devmode::unreachable_note(f) } else { f };
 
@@ -408,7 +417,7 @@ async fn pipeline(args: &Args) -> Result<()> {
     let online = preflight::run(args).await.map_err(note)?;
     ui::done(if online { "online, and the iPhone answers" } else { "the iPhone answers" });
     if args.command == Command::Check {
-        ui::finish("Ready", &["Run siboot to install SideInstaller."]);
+        ui::finish("Ready", &["Run ssboot to install SideStore."]);
         return Ok(());
     }
 
@@ -417,6 +426,7 @@ async fn pipeline(args: &Args) -> Result<()> {
     let source = pairing::ensure(args, &pairing_path).await.map_err(note)?;
     ui::done(match source {
         pairing::Source::Saved => "the saved file still works",
+        pairing::Source::Siboot => "the file siboot saved works",
         pairing::Source::Rootshell => "taken from rootshell",
     });
 
@@ -445,11 +455,46 @@ async fn pipeline(args: &Args) -> Result<()> {
     let mut session = account::sign_in(args).await?;
     ui::done(&format!("team {}", session.team));
 
-    ui::step(5, "Signing SideInstaller for this iPhone");
+    ui::step(5, "Signing SideStore for this iPhone");
     let ipa = sign::fetch_ipa(args).await?;
+    let build = sign::inspect(&ipa)?;
+    let version = build.short_version().map(str::to_string);
+    ui::ok(&match &version {
+        Some(version) => format!("it's SideStore {version}"),
+        None => "it's SideStore".to_string(),
+    });
+    if !build.reads_split_pairing {
+        ui::warn(
+            "This SideStore build doesn't read the pairing files of SideStore's nightlies since 20 \
+             September 2026. It may read only a lockdown pairing, which iOS 27 doesn't let an app \
+             use on the iPhone itself, so it may not connect. Without --ipa, ssboot installs the \
+             nightly, which reads this iPhone's pairing.",
+        );
+    }
     let signed = sign::sign(&mut session, &ipa, &device).await?;
-    ui::done(&match &signed.version {
-        Some(version) => format!("{} {version} signed", signed.name),
+    // Built now, while the tunnel is closed: iOS drops one left idle.
+    let account_config = if build.imports_account_silently {
+        ui::activity("preparing the signing certificate for SideStore");
+        match account::account_config(&mut session).await {
+            Ok(config) => Some(config),
+            Err(e) => {
+                ui::warn(
+                    "Couldn't prepare the signing certificate for SideStore, so it may offer to \
+                     resign itself the first time you sign in to it.",
+                );
+                ui::detail(&e);
+                None
+            }
+        }
+    } else {
+        ui::detail(
+            "this build asks for a password before it takes a certificate file, so it's given \
+             none, as SideInstaller does",
+        );
+        None
+    };
+    ui::done(&match &version {
+        Some(version) => format!("{} {version}", signed.name),
         None => format!("{} signed", signed.name),
     });
 
@@ -459,22 +504,32 @@ async fn pipeline(args: &Args) -> Result<()> {
     ui::ok(&format!("{} installed ({})", signed.name, signed.bundle_id));
     ui::done(&format!("installed · {uploaded}"));
 
-    ui::step(7, "Handing SideInstaller the pairing");
-    seed::hand_over(&mut connection, &signed.bundle_id, &pairing_path).await?;
-    ui::done("SideInstaller has the pairing");
+    ui::step(7, "Handing SideStore the pairing");
+    let handed = handoff::hand_over(
+        &mut connection,
+        &signed.bundle_id,
+        &pairing_path,
+        &device,
+        account_config.as_deref(),
+    )
+    .await?;
+    ui::done("SideStore has the pairing");
 
-    ui::finish(
-        "SideInstaller is installed",
-        &[
-            "Open it from your Home Screen. The first time, iOS asks you to trust your Apple \
-             Account: Settings › General › VPN & Device Management.",
-            "Free accounts' apps last 7 days; SideInstaller can renew itself from then on.",
-        ],
-    );
+    let mut next = vec![
+        "Open SideStore from your Home Screen. The first time, iOS asks you to trust your Apple \
+         Account: Settings › General › VPN & Device Management.",
+        "It has this iPhone's pairing already. Sign in to it with the same Apple Account, and \
+         keep LocalDevVPN connected while it installs or refreshes apps.",
+    ];
+    if !handed.certificate {
+        next.push("If it offers to resign itself when you sign in, let it.");
+    }
+    next.push("Free accounts' apps last 7 days: refresh them in SideStore before then.");
+    ui::finish("SideStore is installed", &next);
     Ok(())
 }
 
-/// Step 4 of `siboot developer-mode`, through the open tunnel.
+/// Step 4 of `ssboot developer-mode`, through the open tunnel.
 async fn developer_mode(args: &Args, connection: &mut tunnel::Connection) -> Result<()> {
     let request = if args.turn_on { devmode::Request::TurnOn } else { devmode::Request::Show };
     let confirm = || ui::confirm("turn it on now?", false);
@@ -502,7 +557,7 @@ async fn developer_mode(args: &Args, connection: &mut tunnel::Connection) -> Res
                 "Developer Mode is in Settings",
                 &[
                     "iOS turns Developer Mode on from here only while the iPhone has no passcode, \
-                     so siboot showed it under Settings › Privacy & Security instead. Turn it on \
+                     so ssboot showed it under Settings › Privacy & Security instead. Turn it on \
                      there; iOS restarts to finish.",
                     unlock,
                 ],
@@ -523,7 +578,7 @@ async fn developer_mode(args: &Args, connection: &mut tunnel::Connection) -> Res
                     "It hung up right after the request, as it does when it restarts to turn \
                      Developer Mode on.",
                     unlock,
-                    "If it doesn't restart, run siboot developer-mode again.",
+                    "If it doesn't restart, run ssboot developer-mode again.",
                 ],
             );
         }
@@ -547,7 +602,7 @@ mod tests {
         let args = parse("");
         assert_eq!(args.command, Command::All);
         assert_eq!(args.device.to_string(), "10.7.0.1:49152");
-        assert!(args.pairing_path().ends_with(".siboot/rp_pairing_file.plist"));
+        assert!(args.pairing_path().ends_with(".ssboot/rp_pairing_file.plist"));
     }
 
     #[test]
