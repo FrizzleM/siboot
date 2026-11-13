@@ -156,9 +156,11 @@ fi
 ln -sf "$BIN" /usr/local/bin/siboot 2> /dev/null || true
 
 # Piped into sh, stdin is this script, and siboot's prompts need the terminal.
+# The test opens it in a subshell: a redirection that fails on `:`, a special
+# built-in, would end this shell, where there's no terminal at all.
 if [ -t 0 ]; then
   exec "$BIN" "$@"
-elif [ -r /dev/tty ] && { : < /dev/tty; } 2> /dev/null; then
+elif [ -r /dev/tty ] && (: < /dev/tty) 2> /dev/null; then
   exec "$BIN" "$@" < /dev/tty
 else
   exec "$BIN" "$@"
