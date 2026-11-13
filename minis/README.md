@@ -66,7 +66,8 @@ made-up run, on a Mac and without an iPhone (`-- stop`, `-- developer-mode` and
 
 In Open Minis siboot shows the run as a page in Minis's own browser, to tap
 rather than type (since 0.17.0; `--terminal` keeps it in the terminal, and
-`--web` serves the page even where there's no Minis). siboot serves the page itself, on this iPhone's loopback, and opens it with
+`--web` serves the page even where there's no Minis). siboot serves the page
+itself, on this iPhone's loopback, and opens it with
 Minis's `minis-open`, which shows it in a sheet over the terminal. Minis stays
 in front, so iOS doesn't pause it. Safari wouldn't do: behind it, iOS pauses
 Minis within seconds, and a paused app takes the connection and never answers.
