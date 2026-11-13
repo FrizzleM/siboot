@@ -17,8 +17,8 @@ use crate::{ui, Args, Command, VERSION};
 
 pub const LOG_FILE: &str = "siboot.log";
 
-/// After a failure the user didn't choose: save the log, and on a terminal
-/// ask whether to copy it.
+/// After a failure the user didn't choose: save the log, and on a terminal or
+/// the page ask whether to copy it.
 pub fn after_failure(args: &Args, f: &Fail) {
     if f.by_user {
         return;
@@ -27,7 +27,9 @@ pub fn after_failure(args: &Args, f: &Fail) {
     let path = args.home.join(LOG_FILE);
     let saved = std::fs::write(&path, &text).is_ok();
     let shown = shown_path(&path);
-    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+    let asks = crate::web::page().is_some()
+        || (std::io::stdin().is_terminal() && std::io::stdout().is_terminal());
+    if !asks {
         if saved {
             ui::note(&format!("The run's log is in {shown}."));
         }
