@@ -6,17 +6,17 @@
 # In Minis's terminal (Minis › Settings › Terminal), with siboot-pair still
 # running in rootshell:
 #
-#   wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
+#   wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/siboot-web/minis/install.sh | sh -s -- --web
 #
 # Afterwards `siboot` runs it again, without downloading.
 set -eu
 
-BASE="${SIBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/main/minis}"
+BASE="${SIBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/siboot-web/minis}"
 # Of bin/siboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run. SIZE only draws the progress
 # bar.
-SHA256="8c7d2b55bc3fd233d1652474495b95f072e8b3e2d9077c4b05ed54ea65b9ba58"
-SIZE=11487632
+SHA256="3376a5adf74055eff9ab81173bb80b75cf8613ec56ec6442b87f5ca099baa2f8"
+SIZE=11553184
 
 DIR="$HOME/.siboot/bin"
 BIN="$DIR/siboot"
