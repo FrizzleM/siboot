@@ -22,6 +22,9 @@ iOS pauses it in the background. The first time, trust your Apple Account in
 Settings › General › VPN & Device Management. Free accounts' apps last 7 days;
 SideInstaller can renew itself from then on.
 
+To tap rather than type, add `-s -- --web` after `sh`: siboot then shows the run
+as a page in Minis's own browser ([below](#the-page---web)).
+
 [`install.sh`](install.sh) downloads [`bin/siboot-aarch64`](bin) from this
 repository (a progress bar on one line while it does), checks it against the
 SHA-256 the script carries, keeps it at `~/.siboot/bin/siboot` (and
@@ -56,6 +59,56 @@ without a terminal on both ends, siboot prints plain lines instead, one per
 event, as before. `cargo run --example screens` plays the screen through a
 made-up run, on a Mac and without an iPhone (`-- stop`, `-- developer-mode` and
 `-- --plain` for the others).
+
+## The page (`--web`)
+
+For whoever would rather tap than type, `--web` shows the run as a page in
+Open Minis's own browser:
+
+```sh
+wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh -s -- --web
+```
+
+siboot serves the page itself, on this iPhone's loopback, and opens it with
+Minis's `minis-open`, which shows it in a sheet over the terminal. Minis stays
+in front, so iOS doesn't pause it. Safari wouldn't do: behind it, iOS pauses
+Minis within seconds, and a paused app takes the connection and never answers.
+
+The page shows what the live screen shows: the steps, the running one with what
+it's doing, for how long and a progress bar, what worked (folded away once its
+step is done), the warnings where they happened, and the box the run ends in,
+which has a button that opens SideInstaller once it's installed. Show details
+adds what `--verbose` adds. The questions are fields and buttons: the email
+with the email keyboard, the password as dots, the codes in boxes that send
+themselves at the sixth digit (marked as one-time codes, which iOS can offer to
+fill from Messages), Other ways for Apple's code, and yes or no. Stop, tapped
+twice, stops the run as Ctrl-C does.
+
+The terminal under the sheet keeps plain lines, as with `--plain`, and return
+there opens the page again after it's been swiped away. Where there's no
+`minis-open`, siboot prints the page's address instead. A page opened again
+draws the same screen: it gets every event since the start. siboot sends one
+every 5 s while it's quiet, so after 15 s with nothing the page says siboot
+isn't answering (iOS has paused Minis) and to go back to Minis.
+
+How the page is kept to this iPhone, and to itself ([`src/web.rs`](src/web.rs)):
+
+- It's served on 127.0.0.1 only, at a port the system picks, so nothing on the
+  Wi-Fi reaches it.
+- Every path starts with 128 random bits, new each run. Any app on the iPhone,
+  and any website open in a browser on it, can reach a loopback port, but none
+  can guess them.
+- The Host header must name the loopback and the port (no DNS rebinding), and
+  answers are POSTed as JSON, from the page's own origin when the browser names
+  one, so a form on another site can't send one.
+- The page loads nothing from anywhere else, can't be framed, and sends no
+  referrer: its address carries the key.
+- An answer goes to the question that asked for it and no further. It's never
+  sent back to the page, the log only says that something was typed, and the
+  address isn't in the log either.
+
+`cargo run --example screens -- --web` plays the made-up run through the page
+on a Mac, once a browser has it open (`-- --web --open` opens it).
 
 ## When it stops
 
@@ -159,7 +212,12 @@ parsing, `developer-mode` against stand-ins for lockdownd and AMFI (on already,
 off, unreadable, a declined restart, the passcode refusal, a hang-up), the bundle walk, 2FA answers, server order, the sign-in errors that
 stop it, install refusals, and rust-core's own `apple_session.rs` and
 `error_text.rs` tests. A test also stands in for a rootshell that iOS has
-paused: the connection goes through and nothing answers. siboot-pair's own
+paused: the connection goes through and nothing answers. The page's server is
+tested over real loopback connections: paths without the key, another Host,
+POSTs that aren't JSON or come from another origin, oversized requests, events
+replayed and resumed after a reconnect, one progress event a percent, every
+kind of question (an answer for another question refused, an empty one or a
+code that isn't six digits asked again, cancelling), Stop, and closing. siboot-pair's own
 tests, with a fake iPhone, are in
 [`../rootshell`](../rootshell#tests).
 
@@ -214,6 +272,17 @@ tests, with a fake iPhone, are in
   was wrong. A signing key saved under the capitalized spelling is moved to the
   lowercase one, so it's kept. Tested on macOS and Alpine aarch64 (59 tests).
   Not signed in to Apple with a capitalized email yet.
+
+- **`--web`** (the page above, not released yet) leaves the steps unchanged.
+  Tested on macOS (71 tests), and through `examples/screens.rs -- --web` in a
+  browser at an iPhone's size: an install with a mistyped transfer code, Other
+  ways for Apple's code and a mistyped one; a stop at Connect and the question
+  about the log; Developer Mode's question and the page's Stop; a page reloaded
+  mid-run; and the run paused with SIGSTOP, where the page said siboot wasn't
+  answering until it was resumed. `siboot --web check` on a Mac stopped at the
+  iPhone, as it does there, and asked about the log on the page. Not built for
+  aarch64 or run in Minis yet, so `minis-open`'s sheet, and Minis's browser
+  reaching the shell's loopback, are untested.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account at its
 certificate or App ID limit (siboot then asks which certificate to revoke), and

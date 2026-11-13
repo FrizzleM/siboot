@@ -15,6 +15,9 @@
 //! is never written to disk or logged. Like SideInstaller, the developer token
 //! and signing key are kept, in ~/.siboot/isideload, so a second run needn't
 //! sign in again.
+//!
+//! With `--web`, the run shows as a page in Open Minis's browser, served on
+//! this iPhone's loopback, and asks its questions there (web.rs).
 
 mod account;
 mod devmode;
@@ -27,6 +30,7 @@ mod seed;
 mod sign;
 mod tunnel;
 mod ui;
+mod web;
 
 // rust-core's saved-session sign-in, compiled here unchanged so siboot signs in
 // exactly as SideInstaller does (anisette identity rules, -80046 skip, token
@@ -80,6 +84,8 @@ pub struct Args {
     pub verbose: bool,
     /// Plain lines, not the live screen.
     pub plain: bool,
+    /// The run as a page in Open Minis's browser; plain lines on the terminal.
+    pub web: bool,
     pub device: SocketAddr,
     /// ~/.siboot: the pairing file, isideload's store, downloads.
     pub home: PathBuf,
@@ -114,6 +120,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> std::result::Result<Par
         turn_on: false,
         verbose: false,
         plain: false,
+        web: false,
         device: SocketAddr::new(IpAddr::V4(DEFAULT_DEVICE_IP), DEFAULT_RP_PORT),
         home: default_home(),
         pairing_file: None,
@@ -130,6 +137,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> std::result::Result<Par
             "-V" | "--version" => return Ok(Parsed::Version),
             "-v" | "--verbose" => args.verbose = true,
             "--plain" => args.plain = true,
+            "--web" => args.web = true,
             "--device-ip" => {
                 let ip: IpAddr = value("--device-ip")?
                     .parse()
@@ -229,6 +237,11 @@ Open Minis, with your own Apple Account.
       ~/.siboot).
   {plain}
       Plain lines instead of the live screen.
+  {web}
+      Show the run as a page in Minis's
+      browser, and answer its questions there.
+      The terminal keeps plain lines; return
+      opens the page again.
   {verbose}
       Show the underlying protocol and library
       errors (plain lines, too).
@@ -256,6 +269,7 @@ Open Minis, with your own Apple Account.
         pairing_file = flag("--pairing-file PATH"),
         home = flag("--home DIR"),
         plain = flag("--plain"),
+        web = flag("--web"),
         verbose = flag("-v, --verbose"),
         help = flag("-h, --help"),
         ip = DEFAULT_DEVICE_IP,
@@ -284,7 +298,19 @@ fn main() -> ExitCode {
         Parsed::Run(args) => args,
     };
 
-    ui::init(args.verbose, args.plain);
+    // Served before anything is shown, so the page gets every event.
+    let page = if args.web {
+        match web::start() {
+            Ok(url) => Some(url),
+            Err(e) => {
+                eprintln!("siboot: couldn't serve the page ({e}), so it runs here instead");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    ui::init(args.verbose, args.plain || page.is_some());
     init_logging(args.verbose);
     ui::header(
         VERSION,
@@ -294,6 +320,9 @@ fn main() -> ExitCode {
             "Installs SideInstaller on this iPhone."
         },
     );
+    if let Some(url) = &page {
+        show_page(url);
+    }
 
     // Two workers: the software TCP stack inside the tunnel keeps moving while
     // a foreground task waits on it, and threads are cheap next to emulation.
@@ -310,6 +339,15 @@ fn main() -> ExitCode {
         }
     };
 
+    if page.is_some() {
+        // A question waits for the page with this thread blocked, so the
+        // select below can't see Ctrl-C then. A task on a worker can.
+        runtime.spawn(async {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                ui::stop_now("Stopped with Ctrl-C.");
+            }
+        });
+    }
     let outcome = runtime.block_on(async {
         tokio::select! {
             outcome = pipeline(&args) => outcome,
@@ -326,6 +364,31 @@ fn main() -> ExitCode {
     };
     ui::close();
     code
+}
+
+/// Opens the page in Minis's browser, and opens it again whenever return is
+/// pressed in the terminal, for a page swiped away. These lines are for the
+/// terminal only, and kept out of the log: the address carries the key.
+fn show_page(url: &str) {
+    web::on_stop(|| ui::stop_now("Stopped from the page."));
+    if web::show(url) {
+        println!("      The page is open in Minis's browser. Closed it?");
+        println!("      Press return here to open it again.");
+        let url = url.to_string();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::stdin().lock().lines() {
+                if line.is_err() {
+                    break;
+                }
+                web::show(&url);
+            }
+        });
+    } else {
+        println!("      Open this in a browser on this iPhone, and");
+        println!("      keep this terminal open:");
+        println!("      {url}");
+    }
 }
 
 /// idevice's and isideload's own logs go to stderr: warnings by default, and
@@ -463,6 +526,8 @@ async fn pipeline(args: &Args) -> Result<()> {
     seed::hand_over(&mut connection, &signed.bundle_id, &pairing_path).await?;
     ui::done("SideInstaller has the pairing");
 
+    // Its own URL scheme (ios-app/Info.plist): the page's button opens it.
+    ui::link("Open SideInstaller", "sideinstaller://");
     ui::finish(
         "SideInstaller is installed",
         &[
@@ -559,6 +624,9 @@ mod tests {
         assert_eq!(parse("check").command, Command::Check);
         assert!(parse("--plain").plain);
         assert!(!parse("").plain);
+        assert!(parse("--web").web);
+        assert!(parse("developer-mode --web").web);
+        assert!(!parse("").web);
     }
 
     #[test]
