@@ -58,7 +58,12 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
         )
         .unwrap_or_default(),
     };
-    let apple_id = apple_id.trim().to_string();
+    // Apple Account names aren't case-sensitive, but GrandSlam's SRP proof
+    // hashes the name exactly as sent, so one typed with a capital (a phone
+    // keyboard may add one) can fail as a wrong password. Lowercase, it also
+    // names one storage folder per account, however it was typed.
+    let typed = apple_id.trim().to_string();
+    let apple_id = typed.to_lowercase();
     if apple_id.is_empty() {
         return Err(Fail::by_user("No Apple Account given."));
     }
@@ -89,6 +94,7 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
             e.to_string(),
         )
     })?;
+    adopt_folder_typed_as(&storage, &typed, &apple_id);
 
     let servers = candidates(args.anisette.as_deref(), last_server(&args.home).as_deref());
     let mut last_error = String::new();
@@ -206,6 +212,21 @@ fn stops_sign_in(error: &str) -> Option<&'static str> {
         return Some(CANCELLED);
     }
     None
+}
+
+/// isideload keeps an account's signing key and saved sign-in in
+/// `<sha256(email)>/`. One made under the email as typed, before siboot
+/// lowercased it, is moved to the lowercase name, so the account keeps its key
+/// and certificate instead of making another.
+fn adopt_folder_typed_as(storage: &Path, typed: &str, apple_id: &str) {
+    if typed == apple_id {
+        return;
+    }
+    let old = apple_session::account_dir(storage, typed);
+    let new = apple_session::account_dir(storage, apple_id);
+    if old.is_dir() && !new.exists() {
+        let _ = std::fs::rename(old, new);
+    }
 }
 
 fn host_of(url: &str) -> &str {
@@ -547,6 +568,31 @@ mod tests {
         assert!(stops_sign_in("login failed: No 2FA code provided, aborting").is_some());
         assert!(stops_sign_in("anisette provider: error sending request").is_none());
         assert!(stops_sign_in(apple_session::ANDROID_ADI_SKIP).is_none());
+    }
+
+    #[test]
+    fn a_folder_made_under_a_capitalized_email_is_kept() {
+        let storage = std::env::temp_dir().join(format!("siboot-adopt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&storage);
+        let typed = "Someone@Example.com";
+        let apple_id = typed.to_lowercase();
+        let old = apple_session::account_dir(&storage, typed);
+        let new = apple_session::account_dir(&storage, &apple_id);
+
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("key"), "old key").unwrap();
+        adopt_folder_typed_as(&storage, typed, &apple_id);
+        assert!(!old.exists());
+        assert_eq!(std::fs::read_to_string(new.join("key")).unwrap(), "old key");
+
+        // A lowercase folder already there is never replaced.
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("key"), "other key").unwrap();
+        adopt_folder_typed_as(&storage, typed, &apple_id);
+        assert_eq!(std::fs::read_to_string(new.join("key")).unwrap(), "old key");
+        assert!(old.exists());
+
+        std::fs::remove_dir_all(&storage).unwrap();
     }
 
     /// The certificate prompt blocks in place, and isideload calls it from the

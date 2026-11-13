@@ -208,6 +208,13 @@ tests, with a fake iPhone, are in
   the Alpine build's `siboot check` on a 46-column pty; `install.sh` installed
   it and skipped a current copy. Not run on an iPhone yet.
 
+- **0.16.2** signs in with the Apple Account email in lowercase. Apple Account
+  names aren't case-sensitive, but GrandSlam's SRP proof hashes the name as
+  sent, and users who typed it with a capital were told the account or password
+  was wrong. A signing key saved under the capitalized spelling is moved to the
+  lowercase one, so it's kept. Tested on macOS and Alpine aarch64 (59 tests).
+  Not signed in to Apple with a capitalized email yet.
+
 Not tested yet: other iPhones and iOS versions, an Apple Account at its
 certificate or App ID limit (siboot then asks which certificate to revoke), and
 a second run after the 7-day profile expires.

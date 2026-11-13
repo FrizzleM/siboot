@@ -61,10 +61,10 @@ fn run(devmode: bool, stop: bool) -> bool {
         "Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover",
     ];
     if devmode {
-        ui::header("0.16.1", "Shows Developer Mode, or turns it on.");
+        ui::header("0.16.2", "Shows Developer Mode, or turns it on.");
         ui::plan(&["Check", "Pairing", "Connect", "Dev Mode"], 4);
     } else {
-        ui::header("0.16.1", "Installs SideInstaller on this iPhone.");
+        ui::header("0.16.2", "Installs SideInstaller on this iPhone.");
         ui::plan(&steps, 7);
     }
 
