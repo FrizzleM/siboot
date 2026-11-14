@@ -2,6 +2,7 @@
 //!
 //! Each check names what to change when it fails: the internet, for sign-in
 //! and the download, and LocalDevVPN, which carries everything to this iPhone.
+//! `ssboot check` also says whether this Open Minis can pair the iPhone.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -28,6 +29,19 @@ pub async fn run(args: &Args) -> Result<bool> {
     ));
     if let Some(name) = found.name {
         ui::detail(&format!("it calls itself \"{name}\""));
+    }
+    if args.command == Command::Check {
+        ui::activity("checking that Open Minis can pair this iPhone");
+        match crate::pairing::can_pair_here(&crate::bridge::Bridge::from_env()).await {
+            Ok(true) => ui::ok("Open Minis can pair this iPhone, and post the code as a notification"),
+            Ok(false) => {
+                ui::ok("Open Minis can pair this iPhone");
+                ui::warn("Minis's notifications are off, so the pairing code will show only in Minis.");
+            }
+            Err(why) => ui::warn(&format!(
+                "{why} The pairing then has to come from a file saved before, or from rootshell."
+            )),
+        }
     }
     Ok(online)
 }

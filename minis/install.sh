@@ -1,10 +1,10 @@
 #!/bin/sh
-# Installs ssboot into Open Minis and runs it, which takes the pairing from
-# ssboot-pair in rootshell, signs SideStore with your Apple Account and
+# Installs ssboot into Open Minis and runs it, which pairs this iPhone with
+# itself (Open Minis 1.16 and later; with an older Minis, the pairing comes from
+# ssboot-pair in rootshell), signs SideStore with your Apple Account and
 # installs it.
 #
-# In Minis's terminal (Minis › Settings › Terminal), with ssboot-pair still
-# running in rootshell:
+# In Minis's terminal (Minis › Settings › Terminal):
 #
 #   wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/minis/install.sh | sh
 #
@@ -15,8 +15,8 @@ BASE="${SSBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/mi
 # Of bin/ssboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run. SIZE only draws the progress
 # bar.
-SHA256="7b2b16aa61887ff2cd3bf85f761def9ee4ff43fa82a7917f3c0bd9b62e996963"
-SIZE=11749824
+SHA256="d3d0072879a9a703623a35a3c679c74d8f024e0b3f8f1d84ea2d6880f907c8f4"
+SIZE=12209016
 
 DIR="$HOME/.ssboot/bin"
 BIN="$DIR/ssboot"

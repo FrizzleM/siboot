@@ -1,8 +1,8 @@
 [package]
 name = "ssboot"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-description = "PC-free bootstrap that installs SideStore onto the iPhone it runs on, from Open Minis's Linux shell, with the pairing made in rootshell"
+description = "PC-free bootstrap that pairs and installs SideStore onto the iPhone it runs on, from Open Minis's Linux shell"
 license = "MIT"
 publish = false
 
@@ -19,7 +19,7 @@ path = "src/main.rs"
 # The same vendored idevice SideInstaller ships (OPACK back-reference fix and
 # logging changes, see ../SideInstaller/rust-core/vendor/idevice/README.md), with the features
 # the pipeline needs:
-#   remote_pairing     pair-verify with the pairing file from rootshell
+#   remote_pairing     the pairable-host responder (pairing in Minis) and pair-verify
 #   tunnel_tcp_stack   in-process software TCP stack over the CDTunnel
 #   rsd / xpc / tcp    RemoteServiceDiscovery inside the tunnel
 #   afc                /PublicStaging upload
@@ -54,12 +54,15 @@ tokio = { version = "1", features = [
   "fs",
   "io-util",
   "time",
+  "process",
   "sync",
   "signal",
 ] }
 plist = "1.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# A random host identifier for a new pairing, as ssboot-pair makes one.
+uuid = { version = "1", features = ["v4"] }
 # Downloading SideStore. Same line isideload uses, so it adds nothing to the
 # tree.
 reqwest = { version = "0.13", features = ["json", "gzip"] }
@@ -81,6 +84,17 @@ memchr = "2"
 libc = "0.2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+[dev-dependencies]
+# The fake iPhone in src/fake_iphone.rs drives the device's side of
+# pair-setup, so it needs the crypto idevice's responder uses, at the same
+# versions. All of them are in the tree already, through idevice.
+idevice-srp = "0.6"
+sha2-10 = { package = "sha2", version = "0.10" }
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
+ed25519-dalek = "2"
+base64 = "0.22"
 
 # isideload signs with apple-codesign-quick; SideInstaller's vendored copy also
 # signs ExtensionKit extensions (#110). Patches only apply at a workspace root,

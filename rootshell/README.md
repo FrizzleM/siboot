@@ -13,6 +13,11 @@ ssboot in Minis. What it keeps in rootshell's folder (`rp_pairing_file.plist`,
 identity either one made is kept, and siboot and ssboot each take the file from
 either.
 
+Since Open Minis 1.16 (App Store, 2026-11-14), ssboot 0.3.0 and later pair the
+iPhone in Minis themselves ([`../minis`](../minis#pairing-in-minis)), so
+ssboot-pair is only needed with an older Minis. ssboot still takes its file
+whenever it's offering one.
+
 ## Running it
 
 Needs iOS 27 or later, Developer Mode on, Wi-Fi, and rootshell allowed Local

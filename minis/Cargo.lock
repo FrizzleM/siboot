@@ -2920,11 +2920,15 @@ dependencies = [
 
 [[package]]
 name = "ssboot"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
+ "chacha20poly1305",
+ "ed25519-dalek",
  "hex",
+ "hkdf",
  "idevice",
+ "idevice-srp",
  "isideload",
  "libc",
  "memchr",
@@ -2934,10 +2938,12 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sha2 0.11.0",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "zip",
 ]
 
