@@ -1,21 +1,23 @@
-//! `siboot` for Open Minis: installs SideInstaller onto the iPhone it runs on,
-//! with no computer and no paid certificate.
+//! `altboot` for Open Minis: installs AltStore onto the iPhone it runs on,
+//! with no computer and no paid certificate. It's siboot (the `main` branch of
+//! FrizzleM/siboot, which installs SideInstaller), made to install AltStore
+//! Classic the way SideInstaller installs it (sign.rs, handoff.rs).
 //!
 //! Open Minis (App Store) runs Alpine Linux on an ARM64 build of iSH, so this is
 //! an ordinary static aarch64 Linux binary built on the same vendored idevice
 //! and isideload as SideInstaller. It pairs this iPhone with itself too:
 //! Minis 1.16 advertises the pairing host for it (pairing.rs, bridge.rs).
 //! Where Minis can't, the pairing comes from rootshell, another App Store app,
-//! whose siboot-pair (../rootshell) hands the file over on the iPhone's
+//! whose altboot-pair (../rootshell) hands the file over on the iPhone's
 //! loopback (see README.md).
 //!
 //! The steps:
 //! 1 check · 2 pairing · 3 connect · 4 Apple ID · 5 sign · 6 install · 7 hand over.
-//! `siboot developer-mode` runs 1–3, then asks for Developer Mode (devmode.rs).
+//! `altboot developer-mode` runs 1–3, then asks for Developer Mode (devmode.rs).
 //!
 //! The Apple ID password goes only to Apple (as an SRP proof, via isideload) and
 //! is never written to disk or logged. Like SideInstaller, the developer token
-//! and signing key are kept, in ~/.siboot/isideload, so a second run needn't
+//! and signing key are kept, in ~/.altboot/isideload, so a second run needn't
 //! sign in again.
 //!
 //! In Open Minis the run shows as a page in Minis's browser, served on this
@@ -28,18 +30,18 @@ mod devmode;
 mod fail;
 #[cfg(test)]
 mod fake_iphone;
+mod handoff;
 mod install;
 mod keepalive;
 mod pairing;
 mod preflight;
 mod report;
-mod seed;
 mod sign;
 mod tunnel;
 mod ui;
 mod web;
 
-// rust-core's saved-session sign-in, compiled here unchanged so siboot signs in
+// rust-core's saved-session sign-in, compiled here unchanged so altboot signs in
 // exactly as SideInstaller does (anisette identity rules, -80046 skip, token
 // reuse). `crate::error_text` is the path it expects.
 #[allow(dead_code)]
@@ -95,7 +97,7 @@ pub struct Args {
     /// (`--terminal`). Neither: the page where there's Minis to show it.
     pub web: Option<bool>,
     pub device: SocketAddr,
-    /// ~/.siboot: the pairing file, isideload's store, downloads.
+    /// ~/.altboot: the pairing file, isideload's store, downloads.
     pub home: PathBuf,
     pub pairing_file: Option<PathBuf>,
     pub apple_id: Option<String>,
@@ -113,7 +115,17 @@ impl Args {
 
 fn default_home() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| ".".into());
-    home.join(".siboot")
+    home.join(".altboot")
+}
+
+/// Where siboot and ssboot, which install SideInstaller and SideStore the same
+/// way, keep their files in this Minis: a pairing and a signing identity
+/// altboot can start from. siboot's first.
+pub fn sibling_homes() -> Vec<(&'static str, PathBuf)> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    vec![("siboot", home.join(".siboot")), ("ssboot", home.join(".ssboot"))]
 }
 
 enum Parsed {
@@ -177,7 +189,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> std::result::Result<Par
         }
     }
     if args.turn_on && args.command != Command::DeveloperMode {
-        return Err("--turn-on goes with `siboot developer-mode`".into());
+        return Err("--turn-on goes with `altboot developer-mode`".into());
     }
     Ok(Parsed::Run(args))
 }
@@ -191,16 +203,16 @@ fn usage() {
     println!(
         "\
 {name} {VERSION}
-Installs SideInstaller onto this iPhone, from
+Installs AltStore onto this iPhone, from
 Open Minis, with your own Apple Account.
 
 {usage}
-  siboot [command] [options]
+  altboot [command] [options]
 
   With no command, every step runs: check,
-  pair this iPhone with siboot (in Settings,
+  pair this iPhone with altboot (in Settings,
   the first time), connect, sign in, sign
-  SideInstaller, install it, and hand it the
+  AltStore, install it, and hand it the
   pairing.
 
 {commands}
@@ -217,17 +229,17 @@ Open Minis, with your own Apple Account.
       --turn-on, turn it on instead, after
       asking: the iPhone restarts. iOS allows
       that only without a passcode; with one,
-      siboot shows the switch instead.
+      altboot shows the switch instead.
 
 {options}
   {apple_id}
       Apple Account to sign with (else
-      SIBOOT_APPLE_ID, else it asks). The
-      password comes from SIBOOT_PASSWORD or a
+      ALTBOOT_APPLE_ID, else it asks). The
+      password comes from ALTBOOT_PASSWORD or a
       prompt that shows only dots.
   {ipa}
-      Install this IPA instead of SideInstaller's
-      latest release.
+      Install this IPA instead of the newest
+      AltStore its source lists.
   {anisette}
       Sign in through this anisette server only.
   {turn_on}
@@ -239,10 +251,10 @@ Open Minis, with your own Apple Account.
   {port}
       The iPhone's RPPairing port (default {rp}).
   {pairing_file}
-      Default ~/.siboot/rp_pairing_file.plist.
+      Default ~/.altboot/rp_pairing_file.plist.
   {home}
-      Where siboot keeps its files (default
-      ~/.siboot).
+      Where altboot keeps its files (default
+      ~/.altboot).
   {terminal}
       Answer here in the terminal, not on the
       page in Minis's browser.
@@ -250,7 +262,7 @@ Open Minis, with your own Apple Account.
       Plain lines instead of the live screen
       in the terminal.
   {web}
-      The page even outside Minis: siboot
+      The page even outside Minis: altboot
       prints its address.
   {verbose}
       Show the underlying protocol and library
@@ -262,9 +274,9 @@ Open Minis, with your own Apple Account.
   iOS 27 or later, Developer Mode on, Wi-Fi,
   LocalDevVPN (App Store) connected, and
   Open Minis 1.16 or later to pair here.
-  With an older Minis, pair with siboot-pair
+  With an older Minis, pair with altboot-pair
   in rootshell first.",
-        name = head("siboot"),
+        name = head("altboot"),
         usage = head("USAGE"),
         commands = head("COMMANDS"),
         options = head("OPTIONS"),
@@ -294,8 +306,8 @@ fn main() -> ExitCode {
     let parsed = match parse_args(std::env::args().skip(1)) {
         Ok(p) => p,
         Err(problem) => {
-            eprintln!("siboot: {problem}");
-            eprintln!("try `siboot --help`");
+            eprintln!("altboot: {problem}");
+            eprintln!("try `altboot --help`");
             return ExitCode::from(2);
         }
     };
@@ -305,7 +317,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Parsed::Version => {
-            println!("siboot {VERSION}");
+            println!("altboot {VERSION}");
             return ExitCode::SUCCESS;
         }
         Parsed::Run(args) => args,
@@ -316,7 +328,7 @@ fn main() -> ExitCode {
         match web::start() {
             Ok(url) => Some(url),
             Err(e) => {
-                eprintln!("siboot: couldn't serve the page ({e}), so it runs here instead");
+                eprintln!("altboot: couldn't serve the page ({e}), so it runs here instead");
                 None
             }
         }
@@ -330,7 +342,7 @@ fn main() -> ExitCode {
         if args.command == Command::DeveloperMode {
             "Shows Developer Mode, or turns it on."
         } else {
-            "Installs SideInstaller on this iPhone."
+            "Installs AltStore on this iPhone."
         },
     );
     if let Some(url) = &page {
@@ -388,7 +400,7 @@ fn show_page(url: &str) {
         println!("      The page is open in Minis's browser. Closed it?");
         println!("      Press return here to open it again.");
         println!("      To type here instead, stop with Ctrl-C");
-        println!("      and run siboot --terminal.");
+        println!("      and run altboot --terminal.");
         let url = url.to_string();
         std::thread::spawn(move || {
             use std::io::BufRead;
@@ -474,7 +486,7 @@ async fn pipeline(args: &Args) -> Result<()> {
             ui::plan(&names, DEVMODE_STAGES);
         }
     }
-    // Before the request, a failure also says what siboot can't do without the
+    // Before the request, a failure also says what altboot can't do without the
     // tunnel.
     let note = |f: Fail| if devmode { devmode::unreachable_note(f) } else { f };
 
@@ -486,17 +498,18 @@ async fn pipeline(args: &Args) -> Result<()> {
     let online = preflight::run(args).await.map_err(note)?;
     ui::done(if online { "online, and the iPhone answers" } else { "the iPhone answers" });
     if args.command == Command::Check {
-        ui::finish("Ready", &["Run siboot to install SideInstaller."]);
+        ui::finish("Ready", &["Run altboot to install AltStore."]);
         return Ok(());
     }
 
-    ui::step(2, "Pairing this iPhone with siboot");
+    ui::step(2, "Pairing this iPhone with altboot");
     let pairing_path = args.pairing_path();
     let source = pairing::ensure(args, &pairing_path).await.map_err(note)?;
-    ui::done(match source {
-        pairing::Source::Saved => "the saved pairing still works",
-        pairing::Source::Rootshell => "taken from rootshell",
-        pairing::Source::Minis => "paired here in Minis",
+    ui::done(&match source {
+        pairing::Source::Saved => "the saved pairing still works".to_string(),
+        pairing::Source::Sibling(tool) => format!("the pairing {tool} saved works"),
+        pairing::Source::Rootshell => "taken from rootshell".to_string(),
+        pairing::Source::Minis => "paired here in Minis".to_string(),
     });
 
     ui::step(3, "Connecting to this iPhone through LocalDevVPN");
@@ -524,9 +537,29 @@ async fn pipeline(args: &Args) -> Result<()> {
     let mut session = account::sign_in(args).await?;
     ui::done(&format!("team {}", session.team));
 
-    ui::step(5, "Signing SideInstaller for this iPhone");
-    let ipa = sign::fetch_ipa(args).await?;
-    let signed = sign::sign(&mut session, &ipa, &device).await?;
+    ui::step(5, "Signing AltStore for this iPhone");
+    let ipa = sign::fetch_ipa(args, &device).await?;
+    let build = sign::inspect(&ipa)?;
+    ui::ok(&match &build.version {
+        Some(version) => format!("it's AltStore {version}"),
+        None => "it's AltStore".to_string(),
+    });
+    if !build.has_remote_altserver() {
+        ui::warn(
+            "This AltStore is older than 2.3, so it has no Remote AltServer: it needs AltServer on \
+             a computer to install and refresh apps. Without --ipa, altboot installs the newest \
+             AltStore its source lists.",
+        );
+    } else if !build.reads_documents_pairing {
+        ui::note(
+            "This AltStore reads the pairing only from inside itself, as 2.3 did, so it's sealed \
+             in there as it's signed.",
+        );
+    }
+    // The pairing as AltStore takes it: sealed into the app for 2.3 (isideload
+    // does that for AltStore alone), and into its Documents in step 7.
+    let record = handoff::altstore_record(&pairing_path);
+    let signed = sign::sign(&mut session, &ipa, &device, record.as_deref()).await?;
     ui::done(&match &signed.version {
         Some(version) => format!("{} {version} signed", signed.name),
         None => format!("{} signed", signed.name),
@@ -538,24 +571,36 @@ async fn pipeline(args: &Args) -> Result<()> {
     ui::ok(&format!("{} installed ({})", signed.name, signed.bundle_id));
     ui::done(&format!("installed · {uploaded}"));
 
-    ui::step(7, "Handing SideInstaller the pairing");
-    seed::hand_over(&mut connection, &signed.bundle_id, &pairing_path).await?;
-    ui::done("SideInstaller has the pairing");
+    ui::step(7, "Handing AltStore the pairing");
+    let handed = handoff::hand_over(&mut connection, &signed.bundle_id, record.as_deref()).await;
+    ui::done(if handed { "AltStore has the pairing" } else { "AltStore pairs as it's set up" });
 
-    // Its own URL scheme (ios-app/Info.plist): the page's button opens it.
-    ui::link("Open SideInstaller", "sideinstaller://");
+    let remote = if handed {
+        "To install and refresh apps without a computer, tap Set up Remote AltServer in \
+         AltStore's Settings. Its pairing file is already in place, so the setup skips pairing."
+    } else {
+        "To install and refresh apps without a computer, tap Set up Remote AltServer in \
+         AltStore's Settings and follow its steps."
+    };
+    // AltStore Classic's own URL scheme (its Info.plist also has `altstore`,
+    // which other AltStore-family apps may claim): the page's button opens it.
+    ui::link("Open AltStore", "altstore-classic://");
     ui::finish(
-        "SideInstaller is installed",
+        "AltStore is installed",
         &[
             "Open it from your Home Screen. The first time, iOS asks you to trust your Apple \
              Account: Settings › General › VPN & Device Management.",
-            "Free accounts' apps last 7 days; SideInstaller can renew itself from then on.",
+            "Sign in to AltStore with the same Apple Account.",
+            remote,
+            "Remote AltServer works through LocalDevVPN: keep it connected while AltStore \
+             installs or refreshes apps. Free accounts' apps last 7 days, so refresh them \
+             before then.",
         ],
     );
     Ok(())
 }
 
-/// Step 4 of `siboot developer-mode`, through the open tunnel.
+/// Step 4 of `altboot developer-mode`, through the open tunnel.
 async fn developer_mode(args: &Args, connection: &mut tunnel::Connection) -> Result<()> {
     let request = if args.turn_on { devmode::Request::TurnOn } else { devmode::Request::Show };
     let confirm = || ui::confirm("turn it on now?", false);
@@ -583,7 +628,7 @@ async fn developer_mode(args: &Args, connection: &mut tunnel::Connection) -> Res
                 "Developer Mode is in Settings",
                 &[
                     "iOS turns Developer Mode on from here only while the iPhone has no passcode, \
-                     so siboot showed it under Settings › Privacy & Security instead. Turn it on \
+                     so altboot showed it under Settings › Privacy & Security instead. Turn it on \
                      there; iOS restarts to finish.",
                     unlock,
                 ],
@@ -604,7 +649,7 @@ async fn developer_mode(args: &Args, connection: &mut tunnel::Connection) -> Res
                     "It hung up right after the request, as it does when it restarts to turn \
                      Developer Mode on.",
                     unlock,
-                    "If it doesn't restart, run siboot developer-mode again.",
+                    "If it doesn't restart, run altboot developer-mode again.",
                 ],
             );
         }
@@ -628,7 +673,7 @@ mod tests {
         let args = parse("");
         assert_eq!(args.command, Command::All);
         assert_eq!(args.device.to_string(), "10.7.0.1:49152");
-        assert!(args.pairing_path().ends_with(".siboot/rp_pairing_file.plist"));
+        assert!(args.pairing_path().ends_with(".altboot/rp_pairing_file.plist"));
     }
 
     #[test]

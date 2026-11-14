@@ -1,13 +1,13 @@
 [package]
-name = "siboot"
-version = "0.18.0"
+name = "altboot"
+version = "0.1.0"
 edition = "2021"
-description = "PC-free bootstrap that pairs and installs SideInstaller onto the iPhone it runs on, from Open Minis's Linux shell"
+description = "PC-free bootstrap that pairs and installs AltStore onto the iPhone it runs on, from Open Minis's Linux shell"
 license = "MIT"
 publish = false
 
 [[bin]]
-name = "siboot"
+name = "altboot"
 path = "src/main.rs"
 
 # Its own workspace: this crate builds for
@@ -24,8 +24,8 @@ path = "src/main.rs"
 #   rsd / xpc / tcp    RemoteServiceDiscovery inside the tunnel
 #   afc                /PublicStaging upload
 #   installation_proxy the install
-#   house_arrest       writing the pairing file into SideInstaller's container
-#   amfi               `siboot developer-mode`
+#   house_arrest       writing the pairing file into AltStore's container
+#   amfi               `altboot developer-mode`
 # `aws-lc`, as rust-core: aarch64 musl is a supported aws-lc target.
 idevice = { path = "../SideInstaller/rust-core/vendor/idevice", default-features = false, features = [
   "aws-lc",
@@ -61,10 +61,10 @@ tokio = { version = "1", features = [
 plist = "1.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# A random host identifier for a new pairing, as siboot-pair makes one.
+# A random host identifier for a new pairing, as altboot-pair makes one.
 uuid = { version = "1", features = ["v4"] }
-# Downloading the SideInstaller release. Same line isideload uses, so it adds
-# nothing to the tree.
+# Downloading AltStore's source and AltStore. Same line isideload uses, so it
+# adds nothing to the tree.
 reqwest = { version = "0.13", features = ["json", "gzip"] }
 # Named by rust-core's apple_session.rs, which this crate compiles as its own
 # (see main.rs). Same versions as rust-core.
@@ -73,6 +73,11 @@ sha2 = "0.11"
 hex = "0.4"
 # No-echo password read from the terminal, for plain output.
 rpassword = "7"
+# Reading the IPA before signing it, and looking for what an AltStore build
+# reads in its binary. Both are in the tree already, through isideload, at
+# these versions.
+zip = { version = "8.3", default-features = false, features = ["deflate"] }
+memchr = "2"
 # The live screen: the terminal's size, and keys one at a time (termios). Already
 # in the tree through tokio and rpassword.
 libc = "0.2"

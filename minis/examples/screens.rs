@@ -1,4 +1,4 @@
-//! siboot's live screen through a made-up run, for working on the UI without
+//! altboot's live screen through a made-up run, for working on the UI without
 //! an iPhone. Nothing here talks to a device or to Apple:
 //!
 //! ```sh
@@ -10,10 +10,10 @@
 //! cargo run --example screens -- --web         # the same, as the page
 //! ```
 //!
-//! A run that stops at Connect then asks whether to copy the log, as siboot
+//! A run that stops at Connect then asks whether to copy the log, as altboot
 //! does; on a Mac, yes puts it on the clipboard with `pbcopy`.
 //!
-//! With `--web` the run is served as siboot serves it, on the loopback, and
+//! With `--web` the run is served as altboot serves it, on the loopback, and
 //! its address printed; it starts once a browser has the page open, and the
 //! questions are answered there. `--open` opens it with macOS's `open`.
 //!
@@ -72,7 +72,7 @@ fn main() {
             )),
             _ => ui::warn("Couldn't copy the log: there's no pbcopy here."),
         }
-        ui::note("It's also in ~/.siboot/siboot.log.");
+        ui::note("It's also in ~/.altboot/altboot.log.");
     }
     ui::close();
     std::process::exit(code);
@@ -83,19 +83,19 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
         "Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover",
     ];
     if devmode {
-        ui::header("0.18.0", "Shows Developer Mode, or turns it on.");
+        ui::header("0.1.0", "Shows Developer Mode, or turns it on.");
         ui::plan(&["Check", "Pairing", "Connect", "Dev Mode"], 4);
     } else {
-        ui::header("0.18.0", "Installs SideInstaller on this iPhone.");
+        ui::header("0.1.0", "Installs AltStore on this iPhone.");
         ui::plan(&steps, 7);
     }
 
     ui::step(1, "Checking LocalDevVPN, this iPhone and the internet");
     for (what, took, answer) in [
         (
-            "reaching GitHub",
+            "reaching apps.altstore.io",
             700,
-            "GitHub answers, and the SideInstaller release is there",
+            "apps.altstore.io answers, and AltStore's source is there",
         ),
         (
             "reaching Apple's sign-in server",
@@ -114,7 +114,7 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
     }
     ui::done("online, and the iPhone answers");
 
-    ui::step(2, "Pairing this iPhone with siboot");
+    ui::step(2, "Pairing this iPhone with altboot");
     ui::activity("checking that Open Minis can pair this iPhone");
     wait(500);
     if rootshell {
@@ -155,10 +155,10 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
             "Without a passcode, this iPhone restarts right away to turn Developer Mode on, and \
              Minis stops with it. Once you unlock it, tap Turn On in the alert iOS shows.",
         );
-        ui::note("With a passcode, iOS refuses, and siboot shows the switch in Settings instead.");
+        ui::note("With a passcode, iOS refuses, and altboot shows the switch in Settings instead.");
         if !ui::confirm("turn it on now?", false) {
             ui::failure(
-                "Nothing was sent, so Developer Mode stays off. `siboot developer-mode` without \
+                "Nothing was sent, so Developer Mode stays off. `altboot developer-mode` without \
                  --turn-on only shows it in Settings, and restarts nothing.",
                 "",
             );
@@ -259,23 +259,29 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
     ui::ok(&format!("signed in as {email} — team Frizzle (ABCDE12345)"));
     ui::done("team Frizzle (ABCDE12345)");
 
-    ui::step(5, "Signing SideInstaller for this iPhone");
-    ui::status("downloading SideInstaller");
-    let total: u64 = 24 * 1_048_576 + 400_000;
+    ui::step(5, "Signing AltStore for this iPhone");
+    ui::activity("asking apps.altstore.io for the newest AltStore");
+    wait(800);
+    ui::ok("AltStore 2.3.3 is the newest for iOS 27.1 on apps.altstore.io");
+    ui::status("downloading AltStore 2.3.3");
+    let total: u64 = 40_615_381;
     for i in 0..=60u64 {
         ui::progress("downloaded", total * i / 60, total);
         wait(45);
     }
     ui::progress_end();
-    ui::ok("downloaded SideInstaller (24.4 MB)");
+    ui::ok("downloaded AltStore 2.3.3 (38.7 MB), the file apps.altstore.io lists");
+    ui::activity("checking it's AltStore");
+    wait(400);
+    ui::ok("it's AltStore 2.3.3");
     ui::status("signing; this takes a while here");
     wait(4200);
-    ui::ok("signed SideInstaller as com.frizzlem.sideinstaller.ABCDE12345");
-    ui::done("SideInstaller 1.7.0 signed");
+    ui::ok("signed AltStore as com.rileytestut.AltStore.ABCDE12345");
+    ui::done("AltStore 2.3.3 signed");
 
     ui::step(6, "Installing it");
-    let total: u64 = 51 * 1_048_576;
-    ui::status("uploading 412 files (51.0 MB)");
+    let total: u64 = 49 * 1_048_576 + 524_288;
+    ui::status("uploading 167 files (49.5 MB)");
     for i in 0..=80u64 {
         ui::progress("uploaded", total * i / 80, total);
         wait(50);
@@ -289,48 +295,57 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
         wait(70);
     }
     ui::progress_end();
-    ui::ok("SideInstaller installed (com.frizzlem.sideinstaller.ABCDE12345)");
-    ui::done("installed · 51.0 MB, 412 files");
+    ui::ok("AltStore installed (com.rileytestut.AltStore.ABCDE12345)");
+    ui::done("installed · 49.5 MB, 167 files");
 
-    ui::step(7, "Handing SideInstaller the pairing");
+    ui::step(7, "Handing AltStore the pairing");
+    ui::activity("opening AltStore's container");
+    wait(500);
     ui::activity("writing the pairing file into it");
     wait(900);
-    ui::done("SideInstaller has the pairing");
+    ui::ok("pairing file written into AltStore (592 bytes, read back and checked)");
+    ui::done("AltStore has the pairing");
 
-    ui::link("Open SideInstaller", "sideinstaller://");
+    ui::link("Open AltStore", "altstore-classic://");
     ui::finish(
-        "SideInstaller is installed",
+        "AltStore is installed",
         &[
             "Open it from your Home Screen. The first time, iOS asks you to trust your Apple \
              Account: Settings › General › VPN & Device Management.",
-            "Free accounts' apps last 7 days; SideInstaller can renew itself from then on.",
+            "Sign in to AltStore with the same Apple Account.",
+            "To install and refresh apps without a computer, tap Set up Remote AltServer in \
+             AltStore's Settings. Its pairing file is already in place, so the setup skips \
+             pairing.",
+            "Remote AltServer works through LocalDevVPN: keep it connected while AltStore \
+             installs or refreshes apps. Free accounts' apps last 7 days, so refresh them \
+             before then.",
         ],
     );
     true
 }
 
-/// Step 2 as Minis 1.16 does it: siboot pairs this iPhone with itself.
+/// Step 2 as Minis 1.16 does it: altboot pairs this iPhone with itself.
 fn pair_here() -> bool {
     ui::ok("Open Minis can pair this iPhone");
     ui::status("start pairing when you're ready");
     if !ui::get_ready(
-        "Pair this iPhone with siboot",
+        "Pair this iPhone with altboot",
         &[
             "Open Settings › Privacy & Security › Developer Mode, and scroll to the bottom.",
-            "Tap Pair with siboot. It can take a few seconds to show.",
-            "Enter your iPhone passcode, then the 6-digit code siboot shows. It comes as a \
+            "Tap Pair with altboot. It can take a few seconds to show.",
+            "Enter your iPhone passcode, then the 6-digit code altboot shows. It comes as a \
              notification too.",
             "Come back to Minis once Settings says it's paired.",
         ],
         &["When you start, a player opens over Minis. It plays silence, which keeps Minis \
-           running while you're in Settings: leave it open. siboot closes it once you're back."],
+           running while you're in Settings: leave it open. altboot closes it once you're back."],
         "Start pairing",
     ) {
         ui::failure("Stopped before pairing.", "");
         return false;
     }
-    ui::ok("Pair with siboot is up in Settings");
-    ui::status("waiting for Pair with siboot in Settings (up to 10 minutes)");
+    ui::ok("Pair with altboot is up in Settings");
+    ui::status("waiting for Pair with altboot in Settings (up to 10 minutes)");
     wait(2500);
     ui::status("Settings connected: waiting for it to ask for a code");
     wait(600);
@@ -348,7 +363,7 @@ fn pair_here() -> bool {
     true
 }
 
-/// Step 2 with siboot-pair offering its file from rootshell.
+/// Step 2 with altboot-pair offering its file from rootshell.
 fn take_from_rootshell() -> bool {
     ui::ok("rootshell is offering its file");
     let mut tries = 3;
@@ -369,7 +384,7 @@ fn take_from_rootshell() -> bool {
         }
         tries -= 1;
         if tries == 0 {
-            ui::failure("The transfer code didn't match. Run siboot again and type the code rootshell shows.", "");
+            ui::failure("The transfer code didn't match. Run altboot again and type the code rootshell shows.", "");
             return false;
         }
         ui::warn(&format!(

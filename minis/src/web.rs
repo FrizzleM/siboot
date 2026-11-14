@@ -1,7 +1,7 @@
 //! The run as a page in Open Minis's own browser, to tap rather than type:
-//! the way siboot runs in Minis, unless it's given `--terminal`.
+//! the way altboot runs in Minis, unless it's given `--terminal`.
 //!
-//! siboot serves the page on this iPhone's loopback, at a port the system
+//! altboot serves the page on this iPhone's loopback, at a port the system
 //! picks, under a path of 128 random bits (the key), and opens it with Minis's
 //! `minis-open`, which shows it in a sheet over the terminal. Minis stays in
 //! front, so iOS doesn't pause it, as it would behind Safari: a paused app
@@ -9,7 +9,7 @@
 //!
 //! The page reads the run as server-sent events (`events`): every event since
 //! the start, then each new one as it happens, so a page opened again draws
-//! the same screen. It answers siboot's questions with a POST (`answer`), and
+//! the same screen. It answers altboot's questions with a POST (`answer`), and
 //! can stop the run (`stop`). Nothing else is served.
 //!
 //! The key keeps the rest of the iPhone out. Any app on it, and any website
@@ -52,7 +52,7 @@ const MAX_CONNECTIONS: usize = 16;
 const READ_WAIT: Duration = Duration::from_secs(10);
 const WRITE_WAIT: Duration = Duration::from_secs(10);
 /// How often a quiet event stream says it's still there. The page calls
-/// siboot unreachable after three of these go missing.
+/// altboot unreachable after three of these go missing.
 const HEARTBEAT: Duration = Duration::from_secs(5);
 /// How long closing waits for the page to have every event.
 const CLOSE_WAIT: Duration = Duration::from_secs(3);
@@ -115,7 +115,7 @@ pub fn close() {
 
 /// Waits until a browser has the page open, for at most `longest`; whether
 /// one does. The screens example plays its made-up run only once it's seen.
-#[allow(dead_code)] // siboot itself doesn't wait: the page replays the run
+#[allow(dead_code)] // altboot itself doesn't wait: the page replays the run
 pub fn wait_for_page(longest: Duration) -> bool {
     let Some(server) = page() else { return false };
     let shared = &server.shared;
@@ -212,7 +212,7 @@ impl Server {
         });
         let serving = Arc::clone(&shared);
         std::thread::Builder::new()
-            .name("siboot-web".into())
+            .name("altboot-web".into())
             .spawn(move || accept(serving, listener))?;
         Ok(Server { shared })
     }
@@ -414,7 +414,7 @@ impl Shared {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Milliseconds since siboot started serving: the page's clock.
+    /// Milliseconds since altboot started serving: the page's clock.
     fn now(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
@@ -473,7 +473,7 @@ fn accept(shared: Arc<Shared>, listener: TcpListener) {
         }
         let serving = Arc::clone(&shared);
         let spawned = std::thread::Builder::new()
-            .name("siboot-web-request".into())
+            .name("altboot-web-request".into())
             .spawn(move || {
                 let _ = handle(&serving, stream);
                 serving.connections.fetch_sub(1, Ordering::SeqCst);
@@ -921,7 +921,7 @@ mod tests {
         assert_eq!(get(&server, &wrong).0, 404);
         let (status, headers, body) = get(&server, &format!("{}/", base(&server)));
         assert_eq!(status, 200);
-        assert!(body.contains("<title>siboot</title>"));
+        assert!(body.contains("<title>altboot</title>"));
         assert_eq!(header(&headers, "content-security-policy"), Some(CSP));
         assert_eq!(header(&headers, "referrer-policy"), Some("no-referrer"));
         assert_eq!(header(&headers, "cache-control"), Some("no-store"));
@@ -1218,15 +1218,15 @@ mod tests {
         let mut reader = subscribe(server, None);
         let started = asked(server, |s| {
             s.ready(
-                "Pair this iPhone with siboot",
-                &["Open Settings.", "Tap Pair with siboot."],
+                "Pair this iPhone with altboot",
+                &["Open Settings.", "Tap Pair with altboot."],
                 &["A player opens."],
                 "Start pairing",
             )
         });
         let question = until(&mut reader, "ask");
         assert_eq!(question["kind"], "ready");
-        assert_eq!(question["steps"][1], "Tap Pair with siboot.");
+        assert_eq!(question["steps"][1], "Tap Pair with altboot.");
         assert_eq!(question["notes"][0], "A player opens.");
         assert_eq!(question["button"], "Start pairing");
         reply(server, question["id"].as_u64().unwrap(), json!({"go": true}));

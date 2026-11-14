@@ -5,6 +5,11 @@
 //! GrandSlam sign-in with two-factor, the -80046 skip for Android-ADI servers,
 //! and the current-Mac identity rules. What's added is the terminal: the
 //! prompts, and the order servers are tried in.
+//!
+//! The first time, altboot starts from what siboot or ssboot saved in the same
+//! Minis, if one did: its signing key and certificate, anisette identity and
+//! sign-in. The certificate goes into AltStore as it's signed (sign.rs), so
+//! AltStore signs with it too once you sign in to it.
 
 use std::path::{Path, PathBuf};
 
@@ -35,7 +40,7 @@ pub const SERVERS: &[&str] = &[
 ];
 
 /// The name the signing certificate is made for, as Xcode names a Mac's.
-const MACHINE_NAME: &str = "siboot";
+const MACHINE_NAME: &str = "altboot";
 
 pub struct Session {
     pub sideloader: Sideloader,
@@ -47,7 +52,7 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
     let apple_id = match args
         .apple_id
         .clone()
-        .or_else(|| std::env::var("SIBOOT_APPLE_ID").ok())
+        .or_else(|| std::env::var("ALTBOOT_APPLE_ID").ok())
     {
         Some(id) => id,
         None => ui::ask_text(
@@ -67,7 +72,7 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
     if apple_id.is_empty() {
         return Err(Fail::by_user("No Apple Account given."));
     }
-    let password = match std::env::var("SIBOOT_PASSWORD") {
+    let password = match std::env::var("ALTBOOT_PASSWORD") {
         Ok(p) if !p.is_empty() => p,
         _ => ui::ask_secret(
             "sign in to your Apple Account",
@@ -88,6 +93,7 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
     }
 
     let storage = args.home.join("isideload");
+    start_from_sibling(&args.home, &crate::sibling_homes());
     std::fs::create_dir_all(&storage).map_err(|e| {
         Fail::new(
             format!("Couldn't create {}.", storage.display()),
@@ -187,6 +193,69 @@ fn remember_server(home: &Path, server: &str) {
     let _ = std::fs::write(last_server_path(home), server);
 }
 
+/// When altboot has no isideload store yet, starts from a copy of the first
+/// one siboot or ssboot keeps in this Minis (`siblings`, from
+/// `crate::sibling_homes`), and of the anisette server that last worked there.
+/// One certificate then signs SideInstaller, SideStore and AltStore alike,
+/// instead of another one taking a free account's last place, or altboot
+/// asking which to revoke. Returns the tool copied from and how many files,
+/// or None when nothing was copied. As ssboot does with siboot's.
+fn start_from_sibling(
+    home: &Path,
+    siblings: &[(&'static str, PathBuf)],
+) -> Option<(&'static str, usize)> {
+    let ours = home.join("isideload");
+    if ours.exists() {
+        return None;
+    }
+    for (tool, their_home) in siblings {
+        let theirs = their_home.join("isideload");
+        if their_home.as_path() == home || !theirs.is_dir() {
+            continue;
+        }
+        match copy_dir(&theirs, &ours) {
+            Ok(0) => {
+                let _ = std::fs::remove_dir_all(&ours);
+            }
+            Ok(files) => {
+                if !last_server_path(home).exists() {
+                    if let Some(server) = last_server(their_home) {
+                        remember_server(home, &server);
+                    }
+                }
+                ui::ok(&format!("starting from the signing certificate and sign-in {tool} saved"));
+                ui::detail(&format!("copied {files} files from {}", theirs.display()));
+                return Some((tool, files));
+            }
+            Err(e) => {
+                // Half a store is worse than none.
+                let _ = std::fs::remove_dir_all(&ours);
+                ui::note(&format!("Couldn't copy what {tool} saved, so altboot doesn't start from it."));
+                ui::detail(&e.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Copies the folder `from` to `to`, which mustn't exist yet, keeping each
+/// file's permissions: the store holds private keys. Returns the files copied.
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<usize> {
+    std::fs::create_dir_all(to)?;
+    let mut files = 0;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            files += copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+            files += 1;
+        }
+    }
+    Ok(files)
+}
+
 /// The user said no to every way of getting the code: not a problem to log.
 const CANCELLED: &str = "Sign-in cancelled.";
 
@@ -199,13 +268,13 @@ fn stops_sign_in(error: &str) -> Option<&'static str> {
         .any(|c| error.contains(c))
     {
         return Some(
-            "Apple rejected the Apple Account or password. Check them and run siboot again. If \
+            "Apple rejected the Apple Account or password. Check them and run altboot again. If \
              you're sure they're right, Apple may be limiting sign-ins: wait a while first.",
         );
     }
     if error.contains("429") || error.to_ascii_lowercase().contains("too many") {
         return Some(
-            "Apple is limiting sign-in attempts for now. Wait a while, then run siboot again.",
+            "Apple is limiting sign-in attempts for now. Wait a while, then run altboot again.",
         );
     }
     if error.contains("No 2FA") {
@@ -215,9 +284,10 @@ fn stops_sign_in(error: &str) -> Option<&'static str> {
 }
 
 /// isideload keeps an account's signing key and saved sign-in in
-/// `<sha256(email)>/`. One made under the email as typed, before siboot
-/// lowercased it, is moved to the lowercase name, so the account keeps its key
-/// and certificate instead of making another.
+/// `<sha256(email)>/`. One made under the email as typed (as siboot made them
+/// before 0.16.2, and altboot may start from siboot's store) is moved to the
+/// lowercase name, so the account keeps its key and certificate instead of
+/// making another.
 fn adopt_folder_typed_as(storage: &Path, typed: &str, apple_id: &str) {
     if typed == apple_id {
         return;
@@ -463,7 +533,7 @@ fn choose_certificates_to_revoke(certs: &Vec<DevelopmentCertificate>) -> Option<
         }
         ui::warn(
             "This Apple Account already has as many signing certificates as Apple allows, so one \
-             must be revoked to make siboot's. Apps signed with a revoked certificate stop \
+             must be revoked to make altboot's. Apps signed with a revoked certificate stop \
              opening, on every device, until they're signed again. This can't be undone.",
         );
         let mut labels: Vec<String> = certs
@@ -491,7 +561,7 @@ fn choose_certificates_to_revoke(certs: &Vec<DevelopmentCertificate>) -> Option<
 fn choose_certificates_plain(certs: &[DevelopmentCertificate]) -> Option<Vec<String>> {
     println!();
     ui::warn("This Apple Account already has as many signing certificates as Apple allows,");
-    ui::warn("so one must be revoked to make siboot's. Apps signed with a revoked certificate");
+    ui::warn("so one must be revoked to make altboot's. Apps signed with a revoked certificate");
     ui::warn("stop opening, on every device, until they're signed again. This can't be undone.");
     for (i, cert) in certs.iter().enumerate() {
         ui::status(&format!(
@@ -512,6 +582,59 @@ fn choose_certificates_plain(certs: &[DevelopmentCertificate]) -> Option<Vec<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_first_run_starts_from_what_siboot_or_ssboot_saved_once() {
+        let root = std::env::temp_dir().join(format!("altboot-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let siboot = root.join(".siboot");
+        let ssboot = root.join(".ssboot");
+        let home = root.join(".altboot");
+        std::fs::create_dir_all(ssboot.join("isideload/keys")).unwrap();
+        std::fs::write(ssboot.join("isideload/keys/key.pem"), b"key").unwrap();
+        std::fs::write(ssboot.join("isideload/state"), b"state").unwrap();
+        std::fs::write(ssboot.join("anisette-server"), "https://ani.iloader.app\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let key = ssboot.join("isideload/keys/key.pem");
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let siblings = [("siboot", siboot.clone()), ("ssboot", ssboot.clone())];
+
+        // siboot never ran here, so ssboot's is taken.
+        assert_eq!(start_from_sibling(&home, &siblings), Some(("ssboot", 2)));
+        assert_eq!(std::fs::read(home.join("isideload/keys/key.pem")).unwrap(), b"key");
+        assert_eq!(last_server(&home).as_deref(), Some("https://ani.iloader.app"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(home.join("isideload/keys/key.pem"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "a private key stays private");
+        }
+
+        // Once altboot has its own, it keeps it.
+        std::fs::create_dir_all(siboot.join("isideload")).unwrap();
+        std::fs::write(siboot.join("isideload/state"), b"siboot's").unwrap();
+        assert_eq!(start_from_sibling(&home, &siblings), None);
+        assert_eq!(std::fs::read(home.join("isideload/state")).unwrap(), b"state");
+
+        // siboot's comes first; an empty one isn't taken.
+        let other = root.join("other");
+        assert_eq!(start_from_sibling(&other, &siblings), Some(("siboot", 1)));
+        std::fs::create_dir_all(root.join(".empty/isideload")).unwrap();
+        let fresh = root.join("fresh");
+        assert_eq!(start_from_sibling(&fresh, &[("siboot", root.join(".empty"))]), None);
+        assert!(!fresh.join("isideload").exists());
+
+        // Nothing saved, nothing copied; and never from itself.
+        assert_eq!(start_from_sibling(&root.join("none"), &[("siboot", root.join("x"))]), None);
+        assert!(!root.join("none/isideload").exists());
+        assert_eq!(start_from_sibling(&ssboot, &[("ssboot", ssboot.clone())]), None);
+    }
 
     fn is(answer: Option<TwoFactorCallbackResponse>, expected: &str) -> bool {
         format!("{answer:?}") == expected
@@ -571,7 +694,7 @@ mod tests {
 
     #[test]
     fn a_folder_made_under_a_capitalized_email_is_kept() {
-        let storage = std::env::temp_dir().join(format!("siboot-adopt-{}", std::process::id()));
+        let storage = std::env::temp_dir().join(format!("altboot-adopt-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&storage);
         let typed = "Someone@Example.com";
         let apple_id = typed.to_lowercase();

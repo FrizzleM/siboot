@@ -2,7 +2,7 @@
 //!
 //! Each check names what to change when it fails: the internet, for sign-in
 //! and the download, and LocalDevVPN, which carries everything to this iPhone.
-//! `siboot check` also says whether this Open Minis can pair the iPhone.
+//! `altboot check` also says whether this Open Minis can pair the iPhone.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -46,14 +46,15 @@ pub async fn run(args: &Args) -> Result<bool> {
     Ok(online)
 }
 
-/// GitHub (the IPA) and Apple's sign-in server answer over TLS. Apple's
-/// `gsa.apple.com` chains to Apple Root CA, which Alpine's bundle lacks, so it's
-/// trusted here as isideload's GrandSlam client trusts it.
+/// AltStore's source (where AltStore is listed and downloaded from) and Apple's
+/// sign-in server answer over TLS. Apple's `gsa.apple.com` chains to Apple Root
+/// CA, which Alpine's bundle lacks, so it's trusted here as isideload's
+/// GrandSlam client trusts it.
 async fn check_online(args: &Args) -> Result<()> {
     let apple_root = reqwest::Certificate::from_der(isideload::sideload::cert_identity::APPLE_ROOT)
         .map_err(|e| Fail::new("Couldn't load Apple's root certificate.", e.to_string()))?;
     let client = reqwest::Client::builder()
-        .user_agent(format!("siboot/{}", crate::VERSION))
+        .user_agent(format!("altboot/{}", crate::VERSION))
         .timeout(Duration::from_secs(20))
         .add_root_certificate(apple_root)
         .build()
@@ -64,20 +65,21 @@ async fn check_online(args: &Args) -> Result<()> {
         .as_deref()
         .is_none_or(|ipa| ipa.starts_with("http"));
     if downloads {
-        let url = args.ipa.as_deref().unwrap_or(crate::sign::RELEASE_IPA);
-        ui::activity("reaching GitHub");
+        let (url, what) = match args.ipa.as_deref() {
+            Some(url) => (url, "the IPA"),
+            None => (crate::sign::SOURCE_URL, "AltStore's source"),
+        };
+        let host = crate::sign::host_of(url);
+        ui::activity(&format!("reaching {host}"));
         match client.head(url).send().await {
-            Ok(r) if r.status().is_success() => {
-                ui::ok("GitHub answers, and the SideInstaller release is there")
-            }
-            Ok(r) => ui::warn(&format!(
-                "GitHub answered {} for the SideInstaller release.",
-                r.status()
-            )),
+            Ok(r) if r.status().is_success() => ui::ok(&format!("{host} answers, and {what} is there")),
+            Ok(r) => ui::warn(&format!("{host} answered {} for {what}.", r.status())),
             Err(e) => {
                 return Err(Fail::new(
-                    "Couldn't reach GitHub, where SideInstaller is downloaded from. Check the \
-                     internet connection.",
+                    format!(
+                        "Couldn't reach {host}, where AltStore is downloaded from. Check the \
+                         internet connection."
+                    ),
                     crate::error_text::error_text(&e),
                 ))
             }
@@ -124,7 +126,7 @@ pub async fn probe(addr: SocketAddr) -> Result<Found> {
             ))
         }
     };
-    let mut client = RemotePairingClient::new(RpPairingSocket::new(stream), "siboot");
+    let mut client = RemotePairingClient::new(RpPairingSocket::new(stream), "altboot");
     let reply = match timeout(Duration::from_secs(10), client.attempt_pair_verify()).await {
         Ok(Ok(reply)) => reply,
         Ok(Err(e)) => {

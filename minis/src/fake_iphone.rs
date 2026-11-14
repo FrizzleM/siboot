@@ -434,20 +434,20 @@ esac"#,
 mod tests {
     use super::*;
 
-    /// Pairs with a siboot running elsewhere (under the iSH emulator, say)
-    /// whose Minis commands are `minis_stub`'s, logging to `$SIBOOT_FAKE_LOG`.
+    /// Pairs with a altboot running elsewhere (under the iSH emulator, say)
+    /// whose Minis commands are `minis_stub`'s, logging to `$ALTBOOT_FAKE_LOG`.
     /// The port comes from its `minis-bonjour advertise` call and the code from
     /// the notification it posts, as a person would read it:
-    /// `SIBOOT_FAKE_LOG=… cargo test dial_a_running_siboot -- --ignored`.
+    /// `ALTBOOT_FAKE_LOG=… cargo test dial_a_running_altboot -- --ignored`.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore = "needs a siboot waiting to pair"]
-    async fn dial_a_running_siboot() {
-        let log = PathBuf::from(std::env::var("SIBOOT_FAKE_LOG").expect("set SIBOOT_FAKE_LOG"));
+    #[ignore = "needs a altboot waiting to pair"]
+    async fn dial_a_running_altboot() {
+        let log = PathBuf::from(std::env::var("ALTBOOT_FAKE_LOG").expect("set ALTBOOT_FAKE_LOG"));
         let advertised = wait_for_line(&log, "minis-bonjour advertise").await;
         let port: u16 = advertised.split(' ').nth(4).unwrap().parse().unwrap();
         let pin = async {
             let posted =
-                wait_for_line(&log, "apple-notification schedule --title siboot pairing code").await;
+                wait_for_line(&log, "apple-notification schedule --title altboot pairing code").await;
             let body = posted.split("--body ").nth(1).unwrap();
             body.chars()
                 .filter(char::is_ascii_digit)

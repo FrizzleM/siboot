@@ -1,15 +1,20 @@
-# siboot-pair for rootshell
+# altboot-pair for rootshell
 
-siboot's pairing step, as a WASM program for
+altboot's pairing step, as a WASM program for
 [rootshell](https://apps.apple.com/app/rootshell-local-terminal-ssh/id6755794662)
 ("rootshell - Local Terminal & SSH", free, App Store). It pairs the iPhone with
-itself, then hands the pairing file to siboot in Open Minis
-([`../minis`](../minis)), which signs and installs SideInstaller.
+itself, then hands the pairing file to altboot in Open Minis
+([`../minis`](../minis)), which signs and installs AltStore.
 
-Since Open Minis 1.16 (App Store, 2026-11-14), siboot 0.18.0 and later pair the
-iPhone in Minis themselves ([`../minis`](../minis#pairing-in-minis)), so
-siboot-pair is only needed with an older Minis. siboot still takes its file
-whenever it's offering one.
+It's siboot-pair (this repository's `main` branch) with altboot's name and
+install command. The files it keeps (`rp_pairing_file.plist`, `host_alt_irk`)
+and the hand-off (`SIBOOT1 <code>` on port 61207) are siboot-pair's, so a host
+identity made by either is kept, and siboot, ssboot and altboot each take the
+file from any of their pair tools.
+
+altboot pairs the iPhone in Minis itself with Open Minis 1.16 and later
+([`../minis`](../minis#pairing-in-minis)), so altboot-pair is only needed with
+an older Minis. altboot still takes its file whenever it's offering one.
 
 ## Running it
 
@@ -20,26 +25,26 @@ its local shell, one line at a time (rootshell doesn't run them joined with
 `&&`):
 
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/main/rootshell/bin/siboot-pair.wasm
+curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/altboot/rootshell/bin/altboot-pair.wasm
 ifconfig en0 > ifconfig.txt
-./siboot-pair.wasm
+./altboot-pair.wasm
 ```
 
 Open **Settings › Privacy & Security › Developer Mode**, scroll to the bottom,
-tap **Pair with siboot**, and enter your passcode and the 6-digit code
-siboot-pair shows in large digits (it also arrives as a notification). Leave
+tap **Pair with altboot**, and enter your passcode and the 6-digit code
+altboot-pair shows in large digits (it also arrives as a notification). Leave
 rootshell running, and in Open Minis's terminal run:
 
 ```sh
-wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/altboot/minis/install.sh | sh
 ```
 
-The first time, siboot asks for the transfer code siboot-pair shows (in large
+The first time, altboot asks for the transfer code altboot-pair shows (in large
 digits, and as a notification you can pull down in Minis) and takes the pairing
-file. After that it uses the file it saved and doesn't ask, so siboot-pair keeps
+file. After that it uses the file it saved and doesn't ask, so altboot-pair keeps
 offering until you close its tab.
 
-siboot-pair's screen is lines that stay and one live line at the bottom, which
+altboot-pair's screen is lines that stay and one live line at the bottom, which
 says what it's waiting for and is rewritten in place: a WASM program in
 rootshell can't learn the terminal's size and blocks in every socket call, so
 that line is kept short enough never to wrap, and moves (a spinner) only while
@@ -47,11 +52,11 @@ the program is awake, during the announcement. Lines are wrapped for an iPhone
 upright, about 40 columns, or to `COLUMNS` when it's set. `--plain` prints plain
 lines instead.
 
-When it stops on a problem, siboot-pair asks **Copy the log to the clipboard?
+When it stops on a problem, altboot-pair asks **Copy the log to the clipboard?
 y/n**: type `y` (or nothing) and return. A WASM program can't run a command, so
 the copy is OSC 52, which rootshell's terminal (Ghostty) puts on the clipboard;
-nothing tells siboot-pair whether it did, so the log is also saved as
-`siboot-pair.log` in rootshell's folder (Files › rootshell). The log is the
+nothing tells altboot-pair whether it did, so the log is also saved as
+`altboot-pair.log` in rootshell's folder (Files › rootshell). The log is the
 lines it showed, plainly, without the codes. It has no times: reading the clock
 would add a WASI import 0.3.0's module doesn't have.
 
@@ -79,7 +84,7 @@ Preview 1 programs, and lends them sockets (`rootshell_socket_*`).
 4. Writes `rp_pairing_file.plist` and `host_alt_irk` into rootshell's folder,
    so a second run keeps the same host identity, and withdraws the announcement.
 5. Offers the file on the iPhone's own loopback, port 61207, behind a 6-digit
-   transfer code, which siboot in Minis asks for, shown and posted the same
+   transfer code, which altboot in Minis asks for, shown and posted the same
    way. The code keeps other apps on the iPhone from taking the file: five
    wrong ones end the offer.
 
@@ -91,7 +96,7 @@ it out first (`git clone --recursive`, or `git submodule update --init`):
 ```sh
 rustup target add wasm32-wasip1
 cargo build --release --target wasm32-wasip1
-cp target/wasm32-wasip1/release/siboot-pair.wasm bin/
+cp target/wasm32-wasip1/release/altboot-pair.wasm bin/
 ```
 
 idevice's `wasm` feature is meant for browsers, but on WASI its randomness
@@ -112,6 +117,14 @@ offer), the announcement's records, the address out of `ifconfig` output, and
 the log (no codes in it) and its base64 for OSC 52.
 
 ## What's been tested
+
+- **0.1.0** is siboot-pair 0.4.0 with altboot's name ("Pair with altboot", the
+  `altboot-pair.wasm` it tells you to run, altboot's install command and
+  transfer code wording); pairing and the hand-off are unchanged. Tested with
+  `cargo test` on a Mac (16 tests); its `.wasm` imports the same 23 functions as
+  siboot-pair 0.4.0's. Not run on an iPhone.
+
+siboot-pair's own history, which this inherits:
 
 - **On an iPhone (iOS 27, November 2026):** this route end to end. siboot-pair
   0.1.0 paired in rootshell, and siboot 0.12.0 in Open Minis's App Store build

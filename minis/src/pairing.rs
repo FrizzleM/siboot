@@ -4,23 +4,25 @@
 //! advertising `_remotepairing-pairable-host._tcp`, which Settings › Privacy &
 //! Security › Developer Mode lists as "Pair with …". Tapping that has the
 //! iPhone dial the advertised port and drive pair-setup with the roles
-//! flipped: the iPhone is the rppairing "host", and siboot answers as the
+//! flipped: the iPhone is the rppairing "host", and altboot answers as the
 //! accessory and shows the code. Dialling the iPhone instead can only
 //! pair-*verify*: it answers `allowsPairSetup: false`.
 //!
 //! The shell can't advertise (iOS refuses its multicast), but Open Minis 1.16
 //! does it for the shell: `minis-bonjour advertise` (bridge.rs) publishes from
-//! the app and forwards each connection to siboot's port on the loopback.
-//! siboot answers with idevice's `PairableHost`, the responder SideInstaller
+//! the app and forwards each connection to altboot's port on the loopback.
+//! altboot answers with idevice's `PairableHost`, the responder SideInstaller
 //! uses, and plays silence through Minis's player so iOS keeps Minis running
 //! while the user is in Settings (keepalive.rs).
 //!
 //! The pairing comes from, in order:
 //! 1. the file saved on an earlier run, while the iPhone accepts it;
-//! 2. the file siboot-pair offers from rootshell (../rootshell), for the
+//! 2. the file siboot or ssboot saved, if one ran in this Minis: they pair the
+//!    same way, so the iPhone takes theirs as well, and altboot keeps a copy;
+//! 3. the file altboot-pair offers from rootshell (../rootshell), for the
 //!    transfer code it shows: the route from before Minis could pair, still
 //!    taken when rootshell is offering;
-//! 3. a new pairing, here in Minis.
+//! 4. a new pairing, here in Minis.
 //!
 //! Either way the iPhone has to accept the file before anything is signed.
 
@@ -42,18 +44,18 @@ use crate::fail::{chain, Fail, Result};
 use crate::keepalive::{self, KeepAlive};
 use crate::{tunnel, ui, Args};
 
-/// Where siboot-pair offers the file (rootshell/src/main.rs, `HANDOFF_PORT`).
+/// Where altboot-pair offers the file (rootshell/src/main.rs, `HANDOFF_PORT`).
 const HANDOFF_PORT: u16 = 61207;
-/// Codes typed before siboot gives up. siboot-pair ends its offer after five.
+/// Codes typed before altboot gives up. altboot-pair ends its offer after five.
 const CODE_TRIES: u32 = 3;
 /// Far larger than a pairing file, which is about 1 KB.
 const MAX_FILE: usize = 64 * 1024;
-/// How long siboot-pair may take to answer a code. It answers at once while
+/// How long altboot-pair may take to answer a code. It answers at once while
 /// rootshell runs, so silence means iOS has paused it.
 const ANSWER_WAIT: Duration = Duration::from_secs(20);
 
-/// "Pair with siboot" in Settings, as siboot-pair calls itself too.
-pub const HOST_NAME: &str = "siboot";
+/// "Pair with altboot" in Settings, as altboot-pair calls itself too.
+pub const HOST_NAME: &str = "altboot";
 /// What the iPhone reads off the host. iOS treats a pairable host as a
 /// computer, so the model stays a Mac's, as rust-core and StikPair send.
 const HOST_MODEL: &str = "Mac17,7";
@@ -86,17 +88,19 @@ const RETURN_WAIT: Duration = Duration::from_secs(10 * 60);
 
 /// What to do where this Minis can't pair: update it, or pair in rootshell.
 pub const UPDATE_OR_ROOTSHELL: &str = "Update Open Minis from the App Store (1.16 and later pair \
-     this iPhone themselves) and run siboot again. Or pair in rootshell (App Store): turn on its \
+     this iPhone themselves) and run altboot again. Or pair in rootshell (App Store): turn on its \
      Settings › Location Diary Mode › Session Only, then run in its local shell, one line at a \
-     time: `curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/main/rootshell/bin/siboot-pair.wasm`, \
-     `ifconfig en0 > ifconfig.txt`, `./siboot-pair.wasm`. Once it has paired, leave it running \
-     and run siboot here again: it asks for the transfer code rootshell shows.";
+     time: `curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/altboot/rootshell/bin/altboot-pair.wasm`, \
+     `ifconfig en0 > ifconfig.txt`, `./altboot-pair.wasm`. Once it has paired, leave it running \
+     and run altboot here again: it asks for the transfer code rootshell shows.";
 
 /// Where the pairing that works came from.
 pub enum Source {
     /// The file saved on an earlier run.
     Saved,
-    /// siboot-pair's offer in rootshell.
+    /// The file siboot or ssboot saved, now copied.
+    Sibling(&'static str),
+    /// altboot-pair's offer in rootshell.
     Rootshell,
     /// A new pairing, made here.
     Minis,
@@ -112,9 +116,29 @@ pub async fn ensure(args: &Args, path: &Path) -> Result<Source> {
                 return Ok(Source::Saved);
             }
             Err(f) => {
-                ui::note("This iPhone doesn't accept the saved pairing file, so siboot pairs again.");
+                ui::note("This iPhone doesn't accept the saved pairing file, so altboot takes another.");
                 ui::detail(&f.raw);
                 saved_refused = Some(f);
+            }
+        }
+    }
+    for (tool, theirs) in sibling_files(args, path) {
+        ui::activity(&format!("trying the pairing file {tool} saved"));
+        match tunnel::verify(args.device, &theirs).await {
+            Ok(()) => {
+                let file = std::fs::read(&theirs).map_err(|e| {
+                    Fail::new(format!("Couldn't read {}.", theirs.display()), e.to_string())
+                })?;
+                save(path, &file)?;
+                ui::ok(&format!(
+                    "this iPhone accepts the pairing file {tool} saved, so altboot keeps a copy"
+                ));
+                return Ok(Source::Sibling(tool));
+            }
+            Err(f) => {
+                ui::note(&format!("This iPhone doesn't accept the pairing file {tool} saved."));
+                ui::detail(&f.raw);
+                saved_refused.get_or_insert(f);
             }
         }
     }
@@ -173,6 +197,31 @@ pub async fn ensure(args: &Args, path: &Path) -> Result<Source> {
     Ok(Source::Minis)
 }
 
+/// The pairing files siboot and ssboot keep, to try when altboot has none
+/// that works: each one that isn't altboot's own file, or a copy of it or of
+/// one before it. None when `--pairing-file` names one, which is then the only
+/// one tried.
+fn sibling_files(args: &Args, ours: &Path) -> Vec<(&'static str, PathBuf)> {
+    if args.pairing_file.is_some() {
+        return Vec::new();
+    }
+    // Already tried above.
+    let mut seen: Vec<Vec<u8>> = std::fs::read(ours).ok().into_iter().collect();
+    let mut files = Vec::new();
+    for (tool, home) in crate::sibling_homes() {
+        let theirs = home.join("rp_pairing_file.plist");
+        let Ok(bytes) = std::fs::read(&theirs) else {
+            continue;
+        };
+        if theirs == ours || seen.contains(&bytes) {
+            continue;
+        }
+        seen.push(bytes);
+        files.push((tool, theirs));
+    }
+    files
+}
+
 /// Whether this Open Minis can advertise a pairing host: Ok with whether it
 /// can post the code as a notification too, or why it can't pair.
 pub async fn can_pair_here(bridge: &Bridge) -> std::result::Result<bool, String> {
@@ -207,7 +256,7 @@ pub async fn can_pair_here(bridge: &Bridge) -> std::result::Result<bool, String>
 
 // ---------------------------------------------------------------- pairing here
 
-/// Pair this iPhone with siboot, here in Minis, into `path`.
+/// Pair this iPhone with altboot, here in Minis, into `path`.
 async fn pair_here(args: &Args, path: &Path, bridge: &Bridge, notify: bool) -> Result<()> {
     let identity = Identity::load(path, &args.home).await;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -232,7 +281,7 @@ async fn pair_here(args: &Args, path: &Path, bridge: &Bridge, notify: bool) -> R
 /// The host identity, kept between runs.
 ///
 /// A new key pair each run would invalidate every copy of the pairing file
-/// already handed to other apps (SideInstaller included), and a new altIRK
+/// already handed to other apps (AltStore included), and a new altIRK
 /// would change the advertised `authTag`, so an iPhone that paired before
 /// wouldn't recognise the host. rust-core keeps both for the same reasons.
 pub struct Identity {
@@ -252,7 +301,7 @@ impl Identity {
             Err(_) => {
                 let mut file = RpPairingFile::generate(HOST_NAME);
                 // `generate` derives the identifier from the name, the same for
-                // every siboot; a random one keeps this host's records apart.
+                // every altboot; a random one keeps this host's records apart.
                 file.identifier = uuid::Uuid::new_v4().to_string().to_uppercase();
                 file
             }
@@ -368,7 +417,7 @@ pub async fn run_host(
             Err(e) => {
                 ui::warn(
                     "Couldn't start the silence that keeps Minis running behind Settings, so iOS \
-                     may pause it there before Pair with siboot shows.",
+                     may pause it there before Pair with altboot shows.",
                 );
                 ui::detail(&e);
                 None
@@ -415,7 +464,7 @@ pub async fn run_host(
                         "Nobody tapped Pair with {} within {}. If it never showed in Settings, \
                          keep Wi-Fi on, check Open Minis has Local Network access (Settings › \
                          Privacy & Security › Local Network), leave the player open, and run \
-                         siboot again.",
+                         altboot again.",
                         setup.name,
                         spoken(setup.limits.device)
                     ),
@@ -445,7 +494,7 @@ pub async fn run_host(
                 if posts {
                     notify(
                         &bridge,
-                        "siboot pairing code",
+                        "altboot pairing code",
                         &format!("{} — type it into Settings", ui::spaced(&pin)),
                     );
                 }
@@ -517,9 +566,9 @@ pub async fn run_host(
     })
 }
 
-const READY_TITLE: &str = "Pair this iPhone with siboot";
+const READY_TITLE: &str = "Pair this iPhone with altboot";
 const PLAYER_NOTE: &str = "When you start, a player opens over Minis. It plays silence, which \
-     keeps Minis running while you're in Settings: leave it open. siboot closes it once you're \
+     keeps Minis running while you're in Settings: leave it open. altboot closes it once you're \
      back.";
 
 /// What the user does in Settings, in order.
@@ -531,11 +580,11 @@ fn ready_steps(setup: &HostSetup) -> Vec<String> {
             setup.name
         ),
         if setup.notify {
-            "Enter your iPhone passcode, then the 6-digit code siboot shows. It comes as a \
+            "Enter your iPhone passcode, then the 6-digit code altboot shows. It comes as a \
              notification too."
                 .into()
         } else {
-            "Enter your iPhone passcode, then the 6-digit code siboot shows. Minis's \
+            "Enter your iPhone passcode, then the 6-digit code altboot shows. Minis's \
              notifications are off, so come back to Minis to read it."
                 .into()
         },
@@ -577,8 +626,8 @@ async fn publish(
     Ok(advert)
 }
 
-/// The silence must play on while siboot waits for Settings, or iOS pauses
-/// Minis there and Pair with siboot goes. Started again while Minis is in
+/// The silence must play on while altboot waits for Settings, or iOS pauses
+/// Minis there and Pair with altboot goes. Started again while Minis is in
 /// front, where its player can open.
 async fn keep_playing(keepalive: &mut KeepAlive, setup: &HostSetup) {
     let in_front = setup
@@ -593,7 +642,7 @@ async fn keep_playing(keepalive: &mut KeepAlive, setup: &HostSetup) {
     match keepalive.revive().await {
         Ok(false) => {}
         Ok(true) => ui::warn(
-            "The player was closed. It keeps Minis running while you're in Settings, so siboot \
+            "The player was closed. It keeps Minis running while you're in Settings, so altboot \
              opened it again: leave it open.",
         ),
         Err(e) => ui::detail(&format!("couldn't start the silence again: {e}")),
@@ -622,7 +671,7 @@ async fn withdraw_leftovers(bridge: &Bridge) {
 fn fixable(e: &BridgeError) -> Option<&'static str> {
     match e.code() {
         Some("authorization_denied") => Some(
-            "Open Minis needs Local Network access to show Pair with siboot. Allow it when iOS \
+            "Open Minis needs Local Network access to show Pair with altboot. Allow it when iOS \
              asks, or turn it on in Settings › Privacy & Security › Local Network, then start \
              again.",
         ),
@@ -639,10 +688,10 @@ fn advertise_failed(e: BridgeError) -> Fail {
         Some("not_declared") => {
             format!("This Open Minis can't advertise a pairing host. {UPDATE_OR_ROOTSHELL}")
         }
-        Some("renamed") => "Minis put Pair with siboot up under another name, which Settings \
-                            won't pair with. Run siboot again."
+        Some("renamed") => "Minis put Pair with altboot up under another name, which Settings \
+                            won't pair with. Run altboot again."
             .to_string(),
-        _ => "Open Minis couldn't put Pair with siboot up in Settings. Run siboot again.".to_string(),
+        _ => "Open Minis couldn't put Pair with altboot up in Settings. Run altboot again.".to_string(),
     };
     Fail::new(advice, e.to_string())
 }
@@ -680,8 +729,8 @@ async fn wait_for_return(setup: &HostSetup) {
     if setup.notify {
         notify(
             &setup.bridge,
-            "siboot paired this iPhone",
-            "Go back to Minis: siboot carries on there.",
+            "altboot paired this iPhone",
+            "Go back to Minis: altboot carries on there.",
         );
     }
     let deadline = tokio::time::Instant::now() + RETURN_WAIT;
@@ -697,9 +746,9 @@ async fn wait_for_return(setup: &HostSetup) {
 
 fn pairing_failed(e: &idevice::IdeviceError) -> Fail {
     let advice = if is_wrong_code(e) {
-        "The code didn't match. Run siboot again and type the new code exactly."
+        "The code didn't match. Run altboot again and type the new code exactly."
     } else {
-        "Pairing didn't finish. Run siboot again, and tap the entry again in Settings."
+        "Pairing didn't finish. Run altboot again, and tap the entry again in Settings."
     };
     Fail::new(advice, chain(e))
 }
@@ -726,7 +775,7 @@ async fn within_limits<T>(
         () = tokio::time::sleep(limits.code_request) => {
             return Err(Fail::new(
                 "The iPhone connected but stopped before asking for a code. Tap the entry in \
-                 Settings again, or run siboot again.",
+                 Settings again, or run altboot again.",
                 format!("no code request within {}", spoken(limits.code_request)),
             ));
         }
@@ -736,7 +785,7 @@ async fn within_limits<T>(
         .map_err(|_| {
             Fail::new(
                 format!(
-                    "The code wasn't entered within {}. Run siboot again for a new one.",
+                    "The code wasn't entered within {}. Run altboot again for a new one.",
                     spoken(limits.code_entry)
                 ),
                 "code entry timed out",
@@ -773,14 +822,14 @@ enum Taken {
     Cancelled,
 }
 
-/// siboot-pair's answer to one code.
+/// altboot-pair's answer to one code.
 enum Reply {
     File(Vec<u8>),
     WrongCode,
     Unexpected(String),
 }
 
-/// Send one code on `stream` and read siboot-pair's answer: `NO`, or
+/// Send one code on `stream` and read altboot-pair's answer: `NO`, or
 /// `OK <length>` and the file.
 async fn exchange(stream: &mut TcpStream, code: &str) -> std::io::Result<Reply> {
     stream.write_all(format!("SIBOOT1 {code}\n").as_bytes()).await?;
@@ -807,7 +856,7 @@ async fn exchange(stream: &mut TcpStream, code: &str) -> std::io::Result<Reply> 
     Ok(Reply::File(file))
 }
 
-/// Take the pairing file siboot-pair is offering at `offer`, for the transfer
+/// Take the pairing file altboot-pair is offering at `offer`, for the transfer
 /// code it shows, into `path`. The code proves the request comes from the
 /// person at the iPhone, not another app. Each answer may take up to `wait`.
 async fn take(
@@ -828,14 +877,14 @@ async fn take(
         };
         let code: String = typed.chars().filter(char::is_ascii_digit).collect();
         ui::activity("sending the code to rootshell");
-        // siboot-pair answers one request per connection.
+        // altboot-pair answers one request per connection.
         if attempt > 1 {
             stream = match connect().await {
                 Ok(Ok(s)) => s,
                 _ => {
                     return Err(Fail::new(
-                        "rootshell stopped offering the pairing file. Run `./siboot-pair.wasm` in \
-                         rootshell again, then siboot here.",
+                        "rootshell stopped offering the pairing file. Run `./altboot-pair.wasm` in \
+                         rootshell again, then altboot here.",
                         "",
                     ))
                 }
@@ -846,13 +895,13 @@ async fn take(
                 return Err(Fail::new(
                     "rootshell didn't answer: iOS has probably paused it. Check its Settings › \
                      Location Diary Mode is on Session Only, open rootshell for a moment, then \
-                     come back here and run siboot again.",
+                     come back here and run altboot again.",
                     format!("no answer on {offer} within {} s", wait.as_secs()),
                 ))
             }
             Ok(Err(e)) => {
                 return Err(Fail::new(
-                    "The hand-over from rootshell broke off. Run siboot again.",
+                    "The hand-over from rootshell broke off. Run altboot again.",
                     e.to_string(),
                 ))
             }
@@ -880,7 +929,7 @@ async fn take(
         return Ok(Taken::File);
     }
     Err(Fail::new(
-        "The transfer code didn't match. Run siboot again and type the code rootshell shows.",
+        "The transfer code didn't match. Run altboot again and type the code rootshell shows.",
         "",
     ))
 }
@@ -914,7 +963,7 @@ mod tests {
     };
 
     fn temp_home(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("siboot-test-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("altboot-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -930,7 +979,7 @@ mod tests {
         HostSetup {
             bridge,
             advertise,
-            name: "siboot test".into(),
+            name: "altboot test".into(),
             keepalive_dir: None,
             notify: false,
             limits: QUICK_LIMITS,
@@ -1036,7 +1085,7 @@ mod tests {
     }
 
     /// The first `advertise` is refused as iOS refuses it while its Local
-    /// Network question is unanswered: siboot says what to allow, asks again,
+    /// Network question is unanswered: altboot says what to allow, asks again,
     /// and pairs.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_local_network_refusal_asks_again_and_pairs() {
@@ -1096,16 +1145,16 @@ mod tests {
         phone.expect("phone paired");
         let calls = std::fs::read_to_string(&log).unwrap();
         let played = calls.find("apple-player play").expect("the silence played");
-        let code = calls.find("--title siboot pairing code").expect("the code was posted");
-        let asked_back = calls.find("--title siboot paired this iPhone").expect("asked back to Minis");
+        let code = calls.find("--title altboot pairing code").expect("the code was posted");
+        let asked_back = calls.find("--title altboot paired this iPhone").expect("asked back to Minis");
         let stopped = calls.find("apple-player stop").expect("the silence was stopped");
         assert!(played < code && code < asked_back && asked_back < stopped, "{calls}");
         // The first notification went out while Minis was still in front.
-        let ready = calls.find("--title Pair with siboot test is ready").expect("said it's ready");
+        let ready = calls.find("--title Pair with altboot test is ready").expect("said it's ready");
         assert!(ready < code, "{calls}");
     }
 
-    /// The player's sheet swiped away while siboot waits for Settings: it's
+    /// The player's sheet swiped away while altboot waits for Settings: it's
     /// opened again, and the pairing goes on.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_closed_player_is_opened_again() {
@@ -1249,10 +1298,10 @@ mod tests {
     // ------------------------------------------------------------ rootshell
 
     fn a_pairing_file() -> Vec<u8> {
-        RpPairingFile::generate("siboot test").to_bytes()
+        RpPairingFile::generate("altboot test").to_bytes()
     }
 
-    /// siboot-pair's side of the hand-off (rootshell/src/main.rs, `offer`):
+    /// altboot-pair's side of the hand-off (rootshell/src/main.rs, `offer`):
     /// one request per connection, `NO` for a wrong code.
     async fn rootshell_offering(code: &'static str, file: Vec<u8>) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1324,7 +1373,7 @@ mod tests {
         assert!(!path.exists());
     }
 
-    /// What siboot met on the iPhone with rootshell in the background: the
+    /// What altboot met on the iPhone with rootshell in the background: the
     /// connection goes through, and then nothing answers.
     #[tokio::test]
     async fn a_rootshell_that_never_answers_is_given_up_on() {

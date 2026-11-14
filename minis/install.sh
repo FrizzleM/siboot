@@ -1,27 +1,28 @@
 #!/bin/sh
-# Installs siboot into Open Minis and runs it, which pairs this iPhone with
+# Installs altboot into Open Minis and runs it, which pairs this iPhone with
 # itself (Open Minis 1.16 and later; with an older Minis, the pairing comes from
-# siboot-pair in rootshell), signs SideInstaller with your Apple Account and
-# installs it.
+# altboot-pair in rootshell), signs AltStore with your Apple Account and
+# installs it. altboot is siboot made to install AltStore instead of
+# SideInstaller: this branch of FrizzleM/siboot.
 #
 # In Minis's terminal (Minis › Settings › Terminal):
 #
-#   wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
+#   wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/altboot/minis/install.sh | sh
 #
-# Afterwards `siboot` runs it again, without downloading.
+# Afterwards `altboot` runs it again, without downloading.
 set -eu
 
-BASE="${SIBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/main/minis}"
-# Of bin/siboot-aarch64, updated with it: a download that doesn't match (an
+BASE="${ALTBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/altboot/minis}"
+# Of bin/altboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run. SIZE only draws the progress
 # bar.
-SHA256="930ee1cdddc434621bac6327f19e53cf6a2b309202a633504b68aa90189e55d5"
-SIZE=12012376
+SHA256="9ca1f59489c77729df5782b581b56210ab0854269e0eb80b35c6759b3e3c2031"
+SIZE=12143456
 
-DIR="$HOME/.siboot/bin"
-BIN="$DIR/siboot"
+DIR="$HOME/.altboot/bin"
+BIN="$DIR/altboot"
 
-# On a terminal, one line that redraws itself, as siboot's own screen does.
+# On a terminal, one line that redraws itself, as altboot's own screen does.
 FANCY=
 if [ -t 1 ] && [ "${TERM:-}" != dumb ] && [ -z "${NO_COLOR:-}" ]; then
   FANCY=1
@@ -60,7 +61,7 @@ fail() {
 
 case "$(uname -m)" in
   aarch64 | arm64) ;;
-  *) fail "siboot runs in Open Minis on an iPhone (aarch64); this is $(uname -m)." ;;
+  *) fail "altboot runs in Open Minis on an iPhone (aarch64); this is $(uname -m)." ;;
 esac
 
 fetch() {
@@ -100,8 +101,8 @@ frame() {
   percent=$((have * 100 / SIZE))
   [ "$percent" -gt 99 ] && percent=99
   size=" $(megabytes "$have")/$(megabytes "$SIZE") MB"
-  # "  ⠋ Downloading siboot " and " 42%", a column spare.
-  cells=$((COLS - 29))
+  # "  ⠋ Downloading altboot " and " 42%", a column spare.
+  cells=$((COLS - 30))
   if [ "$cells" -ge $((12 + ${#size})) ]; then
     cells=$((cells - ${#size}))
   else
@@ -110,7 +111,7 @@ frame() {
   [ "$cells" -gt 24 ] && cells=24
   [ "$cells" -lt 4 ] && cells=4
   full=$((percent * cells / 100))
-  printf '\r\033[2K  \033[36m%s\033[0m Downloading siboot \033[36m%s\033[0m\033[2m%s\033[0m %3d%%%s' \
+  printf '\r\033[2K  \033[36m%s\033[0m Downloading altboot \033[36m%s\033[0m\033[2m%s\033[0m %3d%%%s' \
     "$spin" "$(repeat "$full" ━)" "$(repeat $((cells - full)) ─)" "$percent" "$size"
 }
 
@@ -119,11 +120,11 @@ frame() {
 download() {
   rm -f "$BIN.part"
   if [ -z "$FANCY" ]; then
-    echo "downloading siboot ($(megabytes "$SIZE") MB) …"
-    fetch "$BASE/bin/siboot-aarch64" "$BIN.part"
+    echo "downloading altboot ($(megabytes "$SIZE") MB) …"
+    fetch "$BASE/bin/altboot-aarch64" "$BIN.part"
     return
   fi
-  fetch "$BASE/bin/siboot-aarch64" "$BIN.part" < /dev/null 2> /dev/null &
+  fetch "$BASE/bin/altboot-aarch64" "$BIN.part" < /dev/null 2> /dev/null &
   pid=$!
   i=0
   while kill -0 "$pid" 2> /dev/null; do
@@ -137,25 +138,25 @@ download() {
 
 mkdir -p "$DIR"
 if [ -f "$BIN" ] && [ "$(sha "$BIN")" = "$SHA256" ]; then
-  ok "siboot is up to date"
+  ok "altboot is up to date"
 else
   if ! download; then
     rm -f "$BIN.part"
-    fail "Couldn't download siboot. Check the internet connection and try again."
+    fail "Couldn't download altboot. Check the internet connection and try again."
   fi
   if [ "$(sha "$BIN.part")" != "$SHA256" ]; then
     rm -f "$BIN.part"
-    fail "The siboot download didn't match its checksum. Try again in a few minutes."
+    fail "The altboot download didn't match its checksum. Try again in a few minutes."
   fi
   chmod 755 "$BIN.part"
   mv "$BIN.part" "$BIN"
-  ok "siboot downloaded and checked ($(megabytes "$SIZE") MB)"
+  ok "altboot downloaded and checked ($(megabytes "$SIZE") MB)"
 fi
 
-# So `siboot` works on its own from now on (Minis's shell runs as root).
-ln -sf "$BIN" /usr/local/bin/siboot 2> /dev/null || true
+# So `altboot` works on its own from now on (Minis's shell runs as root).
+ln -sf "$BIN" /usr/local/bin/altboot 2> /dev/null || true
 
-# Piped into sh, stdin is this script, and siboot's prompts need the terminal.
+# Piped into sh, stdin is this script, and altboot's prompts need the terminal.
 # The test opens it in a subshell: a redirection that fails on `:`, a special
 # built-in, would end this shell, where there's no terminal at all.
 if [ -t 0 ]; then

@@ -14,7 +14,7 @@
 //! app instead, and forwards each connection to a port inside the shell.
 //!
 //! `minis-bonjour` came with Minis 1.16 (App Store, 2026-11-14; its TestFlight
-//! builds from late October). 1.15 and earlier don't have it, so there siboot
+//! builds from late October). 1.15 and earlier don't have it, so there altboot
 //! takes the pairing from rootshell instead (pairing.rs).
 
 use std::fmt;
@@ -77,7 +77,7 @@ pub struct Advert {
     pub id: String,
     pub service_type: String,
     /// The name the OS registered, which can differ from the requested one
-    /// after a conflict ("siboot (2)").
+    /// after a conflict ("altboot (2)").
     pub name: String,
     /// `starting`, `ready`, `failed` or `stopped`.
     pub state: String,
@@ -139,11 +139,11 @@ pub struct Listing {
 }
 
 impl Bridge {
-    /// `SIBOOT_MINIS_BIN` names a folder to take the commands from (for tests
+    /// `ALTBOOT_MINIS_BIN` names a folder to take the commands from (for tests
     /// with stand-ins); otherwise they come from `$PATH`.
     pub fn from_env() -> Self {
         Self {
-            dir: std::env::var_os("SIBOOT_MINIS_BIN").map(PathBuf::from),
+            dir: std::env::var_os("ALTBOOT_MINIS_BIN").map(PathBuf::from),
         }
     }
 

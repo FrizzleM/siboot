@@ -38,6 +38,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "altboot-pair"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "ed25519-dalek",
+ "futures",
+ "hex",
+ "hkdf",
+ "idevice",
+ "idevice-srp",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1285,24 +1303,6 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
-
-[[package]]
-name = "siboot-pair"
-version = "0.4.0"
-dependencies = [
- "base64 0.22.1",
- "chacha20poly1305",
- "ed25519-dalek",
- "futures",
- "hex",
- "hkdf",
- "idevice",
- "idevice-srp",
- "serde_json",
- "sha2",
- "tokio",
- "uuid",
-]
 
 [[package]]
 name = "signature"

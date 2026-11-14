@@ -5,16 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
 <meta name="color-scheme" content="dark">
-<title>siboot</title>
+<title>altboot</title>
 <!--
-  siboot's run, served by siboot itself on this iPhone's loopback (src/web.rs)
+  altboot's run, served by altboot itself on this iPhone's loopback (src/web.rs)
   and shown in Open Minis's browser. It reads the run as server-sent events
-  from `events`, answers siboot's questions by POSTing to `answer`, and stops
+  from `events`, answers altboot's questions by POSTing to `answer`, and stops
   it with `stop`. Every URL is relative: the page's own path carries the key
   that lets it in.
 
   The palette, radii and type are SideInstaller's (ios-app/Theme.swift), as on
-  sideinstaller.net. Text from siboot only ever goes in through textContent.
+  sideinstaller.net. Text from altboot only ever goes in through textContent.
 -->
 <style>
 :root{
@@ -161,10 +161,10 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
 <body>
 <main>
   <header class="top">
-    <div class="brand"><span class="badge">siboot</span><span class="version" id="version"></span></div>
+    <div class="brand"><span class="badge">altboot</span><span class="version" id="version"></span></div>
     <button type="button" class="stop" id="stop" hidden>Stop</button>
   </header>
-  <h1 class="tagline" id="tagline">Connecting to siboot…</h1>
+  <h1 class="tagline" id="tagline">Connecting to altboot…</h1>
   <p class="keep" id="keep" hidden></p>
   <p class="banner" id="banner" role="status" hidden></p>
   <ol class="steps" id="steps" aria-live="polite"></ol>
@@ -194,7 +194,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
   let steps = [];        // one per step of the plan
   let active = -1;       // index of the running step
   let status = "";       // what it's doing now
-  let skew = 0;          // this clock minus siboot's
+  let skew = 0;          // this clock minus altboot's
   let lastHeard = Date.now();
   let heard = false, ended = false;
   let asking = null;     // the question on screen
@@ -207,10 +207,10 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     const s = Math.max(0, Math.floor(ms / 1000));
     return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
   };
-  // siboot writes its lines in lower case to go after a name; a line on its
+  // altboot writes its lines in lower case to go after a name; a line on its
   // own starts with a capital, but names stay as they're spelled: the apps',
-  // and a host or a file (new.ani.sidestore.io, siboot.log).
-  const cap = (s) => (/^(rootshell|siboot|iOS)\b|^[^\s.]+\.[^\s.]/.test(s) ? s : s.charAt(0).toUpperCase() + s.slice(1));
+  // and a host or a file (new.ani.sidestore.io, altboot.log).
+  const cap = (s) => (/^(rootshell|altboot|iOS)\b|^[^\s.]+\.[^\s.]/.test(s) ? s : s.charAt(0).toUpperCase() + s.slice(1));
   const mb = (bytes) => (bytes / 1048576).toFixed(1);
 
   function heardAt(at) {
@@ -220,7 +220,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
   }
 
   // One line over the steps, and why it's there: "quiet" (no word from
-  // siboot), "unsent" (an answer that didn't reach it) or "done". Each goes
+  // altboot), "unsent" (an answer that didn't reach it) or "done". Each goes
   // when what put it there does.
   let bannerWhy = "";
   function banner(text, tone, why) {
@@ -405,7 +405,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     pinEnd();
     stopEl.hidden = true;
     if (source) source.close();
-    banner("siboot is done. You can close this page.", "", "done");
+    banner("altboot is done. You can close this page.", "", "done");
   }
 
   // ---------------------------------------------------------- questions
@@ -560,7 +560,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     } catch (err) {
       if (asking && asking.id === id) {
         busy(false);
-        banner("Couldn't reach siboot. It runs in Minis's terminal: is Minis still open?", "warn", "unsent");
+        banner("Couldn't reach altboot. It runs in Minis's terminal: is Minis still open?", "warn", "unsent");
       }
     }
   }
@@ -608,7 +608,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     };
   }
 
-  // A quiet run still pings every 5 s. Three missed: siboot isn't there,
+  // A quiet run still pings every 5 s. Three missed: altboot isn't there,
   // most likely because iOS paused Minis behind another app.
   setInterval(() => {
     const s = steps[active];
@@ -616,8 +616,8 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     if (ended) return;
     if (Date.now() - lastHeard > 15000) {
       banner(heard
-        ? "siboot isn't answering. It runs in Minis's terminal, and iOS pauses Minis when you leave it: go back to Minis to carry on."
-        : "Can't reach siboot. Open this page from siboot in Minis's terminal.", "warn", "quiet");
+        ? "altboot isn't answering. It runs in Minis's terminal, and iOS pauses Minis when you leave it: go back to Minis to carry on."
+        : "Can't reach altboot. Open this page from altboot in Minis's terminal.", "warn", "quiet");
     } else if (bannerWhy === "quiet") {
       banner("");
     }
