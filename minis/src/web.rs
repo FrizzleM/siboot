@@ -341,6 +341,15 @@ impl Server {
         answer["yes"].as_bool().unwrap_or(false)
     }
 
+    /// What to do elsewhere, as numbered `steps` with `notes` under them, and
+    /// `button` to start: true when it's tapped, false on Cancel.
+    pub fn ready(&self, title: &str, steps: &[&str], notes: &[&str], button: &str) -> bool {
+        let answer = self.ask(json!({
+            "kind": "ready", "question": title, "steps": steps, "notes": notes, "button": button,
+        }));
+        answer["go"] == json!(true)
+    }
+
     /// One of `options`, by index. None when the page backs out.
     pub fn choose(&self, title: &str, options: &[String]) -> Option<usize> {
         loop {
@@ -1201,6 +1210,32 @@ mod tests {
             json!({"cancel": true}),
         );
         assert!(!confirmed.join().unwrap(), "cancelling is no");
+    }
+
+    #[test]
+    fn getting_ready_shows_the_steps_and_starts_or_cancels() {
+        let server = leaked();
+        let mut reader = subscribe(server, None);
+        let started = asked(server, |s| {
+            s.ready(
+                "Pair this iPhone with siboot",
+                &["Open Settings.", "Tap Pair with siboot."],
+                &["A player opens."],
+                "Start pairing",
+            )
+        });
+        let question = until(&mut reader, "ask");
+        assert_eq!(question["kind"], "ready");
+        assert_eq!(question["steps"][1], "Tap Pair with siboot.");
+        assert_eq!(question["notes"][0], "A player opens.");
+        assert_eq!(question["button"], "Start pairing");
+        reply(server, question["id"].as_u64().unwrap(), json!({"go": true}));
+        assert!(started.join().unwrap());
+
+        let cancelled = asked(server, |s| s.ready("Pair", &["Open Settings."], &[], "Start"));
+        let question = until(&mut reader, "ask");
+        reply(server, question["id"].as_u64().unwrap(), json!({"cancel": true}));
+        assert!(!cancelled.join().unwrap());
     }
 
     #[test]

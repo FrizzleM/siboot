@@ -117,6 +117,21 @@ body:not(.details) .step[data-state=done] .item.ok{display:none}
 .button.quiet{padding:0 12px; background:none; color:var(--text-2)}
 .choices{display:grid; gap:8px; margin-top:14px}
 .button.choice{justify-content:flex-start; width:100%; height:auto; min-height:48px; padding:12px 16px; border-color:var(--hairline); border-radius:var(--r-control); background:var(--raised); color:var(--text); line-height:1.3; text-align:left}
+/* What to do elsewhere (pairing in Settings), numbered, before it starts. */
+.ready-steps{margin-top:12px; counter-reset:ready}
+.ready-step{display:flex; gap:10px; padding:5px 0; font-size:15px; line-height:1.4}
+.ready-step::before{counter-increment:ready; content:counter(ready); flex:none; display:grid; place-items:center; width:22px; height:22px; margin-top:-1px; border-radius:50%; background:var(--control-hover); color:var(--text-2); font-size:13px; font-weight:600}
+.ready-notes{margin-top:10px}
+.ready-note{padding:2px 0 2px 32px; font-size:14px; color:var(--text-2)}
+
+/* ---------- the pairing code, while Settings waits for it ---------- */
+
+.pin{margin:14px 0 4px; padding:18px; border:1px solid var(--hairline); border-radius:var(--r-card); background:var(--card); box-shadow:inset 0 0 0 1px rgba(47,128,255,.35)}
+.pin-title{font-size:17px; font-weight:600; line-height:1.3}
+.pin-digits{display:flex; gap:6px; margin-top:14px}
+.pin-digit{display:grid; place-items:center; width:42px; height:56px; border-radius:var(--r-control); background:var(--raised); box-shadow:inset 0 0 0 1px var(--hairline-strong); font:600 28px/1 var(--mono); font-variant-numeric:tabular-nums}
+.pin-digit:nth-child(4){margin-left:10px}
+.pin-note{margin-top:12px; font-size:15px; color:var(--text-2)}
 
 /* ---------- how it ended ---------- */
 
@@ -312,6 +327,37 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     bar = null;
   }
 
+  // ---------------------------------------------------------- the pairing code
+
+  // A code to type somewhere else (Settings), on a card of its own under the
+  // running step until "pin_end". Not a question: nothing is sent back.
+  let pinEl = null;
+  function pin(e) {
+    pinEnd();
+    const code = String(e.code || "");
+    pinEl = make("section", "pin");
+    pinEl.setAttribute("role", "status");
+    pinEl.append(make("h2", "pin-title", e.title || "Code"));
+    const digits = make("div", "pin-digits");
+    digits.setAttribute("aria-label", code.split("").join(" "));
+    for (const d of code) {
+      const box = make("span", "pin-digit", d);
+      box.setAttribute("aria-hidden", "true");
+      digits.append(box);
+    }
+    pinEl.append(digits);
+    if (e.note) pinEl.append(make("p", "pin-note", e.note));
+    const s = steps[active];
+    if (s) s.items.after(pinEl);
+    else afterEl.after(pinEl);
+    pinEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  function pinEnd() {
+    if (pinEl) pinEl.remove();
+    pinEl = null;
+  }
+
   // ---------------------------------------------------------- how it ended
 
   function outcome(tone, title, took, paragraphs, cause) {
@@ -348,6 +394,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     // A question it was waiting on when it stopped won't be answered now; one
     // it asks after (the log) comes as a new one.
     if (asking) answered(asking.id);
+    pinEnd();
     if (active >= 0) settle("failed", "stopped after " + clock(now() - steps[active].startedAt));
     outcome("bad", "✕ Stopped", e.took || "", [e.advice], e.cause || "");
   }
@@ -355,6 +402,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
   function end() {
     ended = true;
     if (asking) answered(asking.id);
+    pinEnd();
     stopEl.hidden = true;
     if (source) source.close();
     banner("siboot is done. You can close this page.", "", "done");
@@ -450,6 +498,17 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
       if (e.more) actions.append(button("Other ways", "secondary", "button", () => send({ more: true })));
       actions.append(button("Cancel", "quiet", "button", () => send({ cancel: true })));
       focus = input;
+    } else if (e.kind === "ready") {
+      const list = make("ol", "ready-steps");
+      for (const step of e.steps || []) list.append(make("li", "ready-step", step));
+      askEl.append(list);
+      if ((e.notes || []).length) {
+        const notes = make("ul", "ready-notes");
+        for (const note of e.notes) notes.append(make("li", "ready-note", note));
+        askEl.append(notes);
+      }
+      actions.append(button(e.button || "Start", "primary", "button", () => send({ go: true })));
+      actions.append(button("Cancel", "quiet", "button", () => send({ cancel: true })));
     } else if (e.kind === "confirm") {
       actions.append(button("Yes", e.default ? "primary" : "secondary", "button", () => send({ yes: true })));
       actions.append(button("No", e.default ? "secondary" : "primary", "button", () => send({ yes: false })));
@@ -529,6 +588,8 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
       case "finish": finish(e); break;
       case "failure": failure(e); break;
       case "ask": ask(e); break;
+      case "pin": pin(e); break;
+      case "pin_end": pinEnd(); break;
       case "answered": answered(e.id); break;
       case "end": end(); break;
     }

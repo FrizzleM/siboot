@@ -841,6 +841,149 @@ fn confirm_prompt(question: &str, default: bool) -> bool {
     answer
 }
 
+/// Before the user leaves Minis to do something elsewhere (pair in Settings):
+/// `title`, what to do there in `steps`, what to know first in `notes`, and
+/// `button` to start. True to go ahead, false to stop (Cancel, Esc, No). The
+/// page shows it all on one card; the live screen prints it and asks yes or
+/// no; plain output prints it and goes ahead, as there's nothing to wait for.
+pub fn get_ready(title: &str, steps: &[&str], notes: &[&str], button: &str) -> bool {
+    record(&format!("      {title}:"));
+    for (n, step) in steps.iter().enumerate() {
+        record(&format!("        {}. {step}", n + 1));
+    }
+    for note in notes {
+        record(&format!("        {note}"));
+    }
+    let go = if let Some(page) = web::page() {
+        page.ready(title, steps, notes, button)
+    } else {
+        print_ready(title, steps, notes);
+        if is_live() {
+            confirm_prompt(&format!("{}?", lowercase_first(button)), true)
+        } else {
+            true
+        }
+    };
+    record_answer(title, Some(if go { button } else { "Cancel" }));
+    go
+}
+
+fn print_ready(title: &str, steps: &[&str], notes: &[&str]) {
+    let mut ui = ui();
+    if ui.mode != Mode::Live {
+        ui.end_plain_line();
+        println!("{INDENT}{}", ui.style(BOLD, title));
+        for (n, step) in steps.iter().enumerate() {
+            println!("{INDENT}  {}. {step}", n + 1);
+        }
+        for note in notes {
+            println!("{INDENT}{note}");
+        }
+        flush();
+        return;
+    }
+    let max = line_width();
+    let mut lines = vec![
+        String::new(),
+        Line::new()
+            .add(NONE, "  ")
+            .add(STRONG, "◆ ")
+            .add(BOLD, title.to_string())
+            .render(max, ui.color),
+    ];
+    for (n, step) in steps.iter().enumerate() {
+        let lead = Line::new().add(NONE, "    ").add(STRONG, format!("{}. ", n + 1));
+        lines.extend(hanging(&lead, NONE, step, max, ui.color));
+    }
+    for note in notes {
+        lines.extend(hanging(&Line::new().add(NONE, "    "), DIM, note, max, ui.color));
+    }
+    lines.push(String::new());
+    ui.paint(&lines);
+}
+
+/// The pairing code while Settings waits for it: in large digits on the live
+/// screen, on a card of its own on the page until `code_gone`, and plainly
+/// otherwise, with `note` saying where it goes. Not in the log, which is
+/// meant to be pasted somewhere.
+pub fn show_code(code: &str, note: &str) {
+    record("      (the 6-digit pairing code was shown)");
+    web::send(json!({"t": "pin", "title": "Pairing code", "code": code, "note": note}));
+    let mut ui = ui();
+    if ui.mode != Mode::Live {
+        let line = format!(
+            "{INDENT}{} {}",
+            ui.style(STRONG, "Pairing code:"),
+            ui.style(BOLD, &spaced(code))
+        );
+        ui.plain(&line);
+        ui.plain(&format!("{INDENT}{note}"));
+        return;
+    }
+    let max = line_width();
+    let mut lines = vec![String::new()];
+    for row in big_digits(code) {
+        lines.push(Line::new().add(NONE, "    ").add(STRONG, row).render(max, ui.color));
+    }
+    lines.push(
+        Line::new()
+            .add(NONE, "    ")
+            .add(DIM, spaced(code))
+            .render(max, ui.color),
+    );
+    lines.extend(hanging(&Line::new().add(NONE, "    "), NONE, note, max, ui.color));
+    lines.push(String::new());
+    ui.paint(&lines);
+}
+
+/// The code from `show_code` is done with: the page takes its card away.
+pub fn code_gone() {
+    web::send(json!({"t": "pin_end"}));
+}
+
+/// "481516" as "481 516".
+pub fn spaced(code: &str) -> String {
+    let digits: Vec<char> = code.chars().collect();
+    if digits.len() == 6 {
+        format!(
+            "{} {}",
+            digits[..3].iter().collect::<String>(),
+            digits[3..].iter().collect::<String>()
+        )
+    } else {
+        code.to_string()
+    }
+}
+
+/// Digits three rows tall in heavy box-drawing lines, as siboot-pair shows
+/// its codes (rootshell/src/ui.rs).
+const DIGITS: [[&str; 3]; 10] = [
+    ["┏━┓", "┃ ┃", "┗━┛"],
+    ["╺┓ ", " ┃ ", "╺┻╸"],
+    ["╺━┓", "┏━┛", "┗━╸"],
+    ["╺━┓", "╺━┫", "╺━┛"],
+    ["╻ ╻", "┗━┫", "  ╹"],
+    ["┏━╸", "┗━┓", "╺━┛"],
+    ["┏━╸", "┣━┓", "┗━┛"],
+    ["╺━┓", "  ┃", "  ╹"],
+    ["┏━┓", "┣━┫", "┗━┛"],
+    ["┏━┓", "┗━┫", "╺━┛"],
+];
+
+/// `code`'s three rows in large digits, a wider gap after the third.
+fn big_digits(code: &str) -> [String; 3] {
+    let mut rows: [String; 3] = Default::default();
+    for (i, d) in code.chars().filter_map(|c| c.to_digit(10)).enumerate() {
+        for (row, out) in rows.iter_mut().enumerate() {
+            if i > 0 {
+                out.push_str(if i % 3 == 0 { "   " } else { " " });
+            }
+            out.push_str(DIGITS[d as usize][row]);
+        }
+    }
+    rows
+}
+
 /// One of `options`, while the running step shows `title`: the arrows move,
 /// a digit or return picks. None when the user backs out (Esc).
 pub fn choose(title: &str, options: &[String]) -> Option<usize> {
@@ -2258,6 +2401,21 @@ mod tests {
                 .all(|l| l.starts_with(&" ".repeat(TEXT_COLUMN))),
             "{lines:#?}"
         );
+    }
+
+    #[test]
+    fn the_pairing_code_in_large_digits_fits_an_upright_iphone() {
+        for (d, glyph) in DIGITS.iter().enumerate() {
+            assert!(glyph.iter().all(|row| width(row) == 3), "{d}");
+        }
+        let rows = big_digits("481516");
+        // Six digits of three, four gaps of one, one of three.
+        assert!(rows.iter().all(|row| width(row) == 25), "{rows:#?}");
+        // Indented by four, it fits in Minis's terminal upright (about 45).
+        assert!(4 + width(&rows[0]) <= 40);
+        assert_eq!(rows[0], "╻ ╻ ┏━┓ ╺┓    ┏━╸ ╺┓  ┏━╸");
+        assert_eq!(spaced("481516"), "481 516");
+        assert_eq!(spaced("12"), "12");
     }
 
     #[test]

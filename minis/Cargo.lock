@@ -2812,10 +2812,15 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "siboot"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
+ "base64 0.22.1",
+ "chacha20poly1305",
+ "ed25519-dalek",
  "hex",
+ "hkdf",
  "idevice",
+ "idevice-srp",
  "isideload",
  "libc",
  "plist",
@@ -2824,10 +2829,12 @@ dependencies = [
  "rpassword",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sha2 0.11.0",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

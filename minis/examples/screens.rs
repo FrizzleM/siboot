@@ -2,7 +2,8 @@
 //! an iPhone. Nothing here talks to a device or to Apple:
 //!
 //! ```sh
-//! cargo run --example screens                  # an install
+//! cargo run --example screens                  # an install, pairing in Minis
+//! cargo run --example screens -- rootshell     # taking rootshell's pairing
 //! cargo run --example screens -- stop          # one that stops at Connect
 //! cargo run --example screens -- developer-mode
 //! cargo run --example screens -- --plain       # the same, as plain lines
@@ -16,7 +17,8 @@
 //! its address printed; it starts once a browser has the page open, and the
 //! questions are answered there. `--open` opens it with macOS's `open`.
 //!
-//! The codes it asks for are 481516 (transfer) and 123456 (Apple's).
+//! The codes it asks for are 481516 (transfer) and 123456 (Apple's). The
+//! pairing code it shows is 975 088.
 
 #![allow(dead_code)]
 
@@ -51,7 +53,7 @@ fn main() {
     }
     let devmode = has("developer-mode");
     let stop = has("stop");
-    let code = if run(devmode, stop) { 0 } else { 1 };
+    let code = if run(devmode, stop, has("rootshell")) { 0 } else { 1 };
     if stop && ui::confirm("copy the log to the clipboard?", true) {
         let log = ui::recorded().join("\n");
         let copied = std::process::Command::new("pbcopy")
@@ -76,15 +78,15 @@ fn main() {
     std::process::exit(code);
 }
 
-fn run(devmode: bool, stop: bool) -> bool {
+fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
     let steps = [
         "Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover",
     ];
     if devmode {
-        ui::header("0.16.2", "Shows Developer Mode, or turns it on.");
+        ui::header("0.18.0", "Shows Developer Mode, or turns it on.");
         ui::plan(&["Check", "Pairing", "Connect", "Dev Mode"], 4);
     } else {
-        ui::header("0.16.2", "Installs SideInstaller on this iPhone.");
+        ui::header("0.18.0", "Installs SideInstaller on this iPhone.");
         ui::plan(&steps, 7);
     }
 
@@ -112,41 +114,16 @@ fn run(devmode: bool, stop: bool) -> bool {
     }
     ui::done("online, and the iPhone answers");
 
-    ui::step(2, "Taking the pairing from rootshell");
-    ui::activity("asking rootshell for its pairing file");
-    wait(600);
-    ui::ok("rootshell is offering its file");
-    let mut tries = 3;
-    loop {
-        let Some(code) = ui::ask_code(
-            "rootshell is offering its file",
-            "Code",
-            "type the transfer code it shows",
-            "Transfer code shown in rootshell: ",
-        ) else {
-            ui::failure("rootshell isn't offering a pairing file.", "");
-            return false;
-        };
-        ui::activity("sending the code to rootshell");
-        wait(400);
-        if code == "481516" {
-            break;
-        }
-        tries -= 1;
-        if tries == 0 {
-            ui::failure("The transfer code didn't match. Run siboot again and type the code rootshell shows.", "");
+    ui::step(2, "Pairing this iPhone with siboot");
+    ui::activity("checking that Open Minis can pair this iPhone");
+    wait(500);
+    if rootshell {
+        if !take_from_rootshell() {
             return false;
         }
-        ui::warn(&format!(
-            "That isn't the code rootshell shows ({tries} more {}).",
-            if tries == 1 { "try" } else { "tries" }
-        ));
+    } else if !pair_here() {
+        return false;
     }
-    ui::ok("took the pairing file from rootshell (1184 bytes)");
-    ui::activity("checking it with this iPhone");
-    wait(700);
-    ui::done("taken from rootshell");
-
     ui::step(3, "Connecting to this iPhone through LocalDevVPN");
     for (what, took) in [
         ("greeting the iPhone", 300),
@@ -329,5 +306,80 @@ fn run(devmode: bool, stop: bool) -> bool {
             "Free accounts' apps last 7 days; SideInstaller can renew itself from then on.",
         ],
     );
+    true
+}
+
+/// Step 2 as Minis 1.16 does it: siboot pairs this iPhone with itself.
+fn pair_here() -> bool {
+    ui::ok("Open Minis can pair this iPhone");
+    ui::status("start pairing when you're ready");
+    if !ui::get_ready(
+        "Pair this iPhone with siboot",
+        &[
+            "Open Settings › Privacy & Security › Developer Mode, and scroll to the bottom.",
+            "Tap Pair with siboot. It can take a few seconds to show.",
+            "Enter your iPhone passcode, then the 6-digit code siboot shows. It comes as a \
+             notification too.",
+            "Come back to Minis once Settings says it's paired.",
+        ],
+        &["When you start, a player opens over Minis. It plays silence, which keeps Minis \
+           running while you're in Settings: leave it open. siboot closes it once you're back."],
+        "Start pairing",
+    ) {
+        ui::failure("Stopped before pairing.", "");
+        return false;
+    }
+    ui::ok("Pair with siboot is up in Settings");
+    ui::status("waiting for Pair with siboot in Settings (up to 10 minutes)");
+    wait(2500);
+    ui::status("Settings connected: waiting for it to ask for a code");
+    wait(600);
+    ui::status("waiting for the code to be typed into Settings");
+    ui::show_code("975088", "Type it into Settings. It came as a notification too.");
+    wait(5000);
+    ui::code_gone();
+    ui::status("paired: go back to Minis to carry on");
+    wait(1500);
+    ui::ok("paired with Frizzle's iPhone (iPhone18,1)");
+    ui::activity("checking the new pairing with this iPhone");
+    wait(700);
+    ui::ok("this iPhone accepts the new pairing");
+    ui::done("paired here in Minis");
+    true
+}
+
+/// Step 2 with siboot-pair offering its file from rootshell.
+fn take_from_rootshell() -> bool {
+    ui::ok("rootshell is offering its file");
+    let mut tries = 3;
+    loop {
+        let Some(code) = ui::ask_code(
+            "rootshell is offering its file",
+            "Code",
+            "type the transfer code it shows",
+            "Transfer code shown in rootshell: ",
+        ) else {
+            ui::failure("Stopped at the transfer code.", "");
+            return false;
+        };
+        ui::activity("sending the code to rootshell");
+        wait(400);
+        if code == "481516" {
+            break;
+        }
+        tries -= 1;
+        if tries == 0 {
+            ui::failure("The transfer code didn't match. Run siboot again and type the code rootshell shows.", "");
+            return false;
+        }
+        ui::warn(&format!(
+            "That isn't the code rootshell shows ({tries} more {}).",
+            if tries == 1 { "try" } else { "tries" }
+        ));
+    }
+    ui::ok("took the pairing file from rootshell (1184 bytes)");
+    ui::activity("checking it with this iPhone");
+    wait(700);
+    ui::done("taken from rootshell");
     true
 }

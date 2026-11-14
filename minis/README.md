@@ -2,14 +2,15 @@
 
 Installs SideInstaller onto the iPhone it runs on, signed with your own Apple
 Account, from the Linux shell of [Open Minis](https://apps.apple.com/app/id6759188481)
-(free, App Store): no computer, no certificate. The pairing comes from
-siboot-pair in rootshell ([`../rootshell`](../rootshell)), which runs first.
+(free, App Store): no computer, no certificate, no other app to pair with. Since
+Open Minis 1.16 (App Store, 2026-11-14) siboot pairs the iPhone with itself too
+([below](#pairing-in-minis)). With an older Minis, the pairing comes from
+siboot-pair in rootshell ([`../rootshell`](../rootshell)), as it did before.
 
 ## Running it
 
 Needs iOS 27 or later, Developer Mode on, Wi-Fi, LocalDevVPN (App Store)
-connected, and siboot-pair in rootshell paired and still running
-([`../rootshell`](../rootshell#running-it)). Then, in Open Minis's terminal:
+connected, and Open Minis 1.16 or later. Then, in Open Minis's terminal:
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
@@ -17,12 +18,22 @@ wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.s
 
 siboot opens a page over the terminal, in Minis's own browser
 ([below](#the-page)), that shows each step and asks its questions. The first
-time, enter the transfer code rootshell shows; after that siboot uses the
-pairing file it saved and doesn't ask. Then your Apple Account email, password
-and verification code. Keep Minis open until siboot says it's done: iOS pauses
-it in the background. The first time, trust your Apple Account in Settings ›
-General › VPN & Device Management. Free accounts' apps last 7 days;
+time, it pairs this iPhone with itself: the page says what to do, and when you
+tap **Start pairing**, open Settings › Privacy & Security › Developer Mode,
+scroll to the bottom, tap **Pair with siboot**, and enter your passcode, then
+the 6-digit code siboot shows (it also comes as a notification). A player opens
+over Minis meanwhile: leave it open, it keeps Minis running while you're in
+Settings. Go back to Minis once Settings says it's paired. After that siboot
+uses the pairing file it saved and doesn't ask. Then your Apple Account email,
+password and verification code. Keep Minis open until siboot says it's done:
+iOS pauses it in the background. The first time, trust your Apple Account in
+Settings › General › VPN & Device Management. Free accounts' apps last 7 days;
 SideInstaller can renew itself from then on.
+
+With Open Minis 1.15 or older, pair in rootshell first
+([`../rootshell`](../rootshell#running-it)) and leave it running: siboot takes
+its file for the transfer code it shows. siboot also takes rootshell's file
+whenever siboot-pair is offering one, in any Minis.
 
 To answer in the terminal instead, add `-s -- --terminal` after `sh` (or run
 `siboot --terminal` once it's installed).
@@ -52,6 +63,8 @@ field, the password as dots, the transfer and verification codes in boxes that
 send themselves at the sixth digit, yes or no on `y` or `n` (or the arrows and
 return), and menus picked with the arrows or a digit. At the verification code,
 a letter shows the other ways to get one (a text, a call, the devices, again).
+Before pairing, what to do in Settings is printed, and **Start pairing?** is a
+yes or no; the pairing code then shows in large digits, three rows tall.
 Esc steps back or stops; Ctrl-C stops.
 
 Every line is cut or wrapped to the terminal's width (an iPhone upright gives
@@ -79,7 +92,9 @@ which has a button that opens SideInstaller once it's installed. Show details
 adds what `--verbose` adds. The questions are fields and buttons: the email
 with the email keyboard, the password as dots, the codes in boxes that send
 themselves at the sixth digit (marked as one-time codes, which iOS can offer to
-fill from Messages), Other ways for Apple's code, and yes or no. Stop, tapped
+fill from Messages), Other ways for Apple's code, and yes or no. Pairing shows
+what to do in Settings on a card with **Start pairing**, then the pairing code
+in large digits on a card of its own while Settings waits for it. Stop, tapped
 twice, stops the run as Ctrl-C does.
 
 The terminal under the sheet keeps plain lines, as with `--plain`, and return
@@ -130,7 +145,7 @@ file is.
 | # | Step | How |
 |---|---|---|
 | 1 | Check | GitHub and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN |
-| 2 | Pairing | the file saved in `~/.siboot` on an earlier run, while the iPhone accepts it; else the one siboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), pair-verified with the iPhone |
+| 2 | Pairing | the file saved in `~/.siboot` on an earlier run, while the iPhone accepts it; else the one siboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), when it's offering; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
 | 3 | Connect | pair-verify → `createListener` → TLS-PSK → CDTunnel → software TCP → RSD, as `tunnel_create_rppairing_multihost` does; lockdownd gives the UDID |
 | 4 | Apple ID | rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order |
 | 5 | Sign | the latest `SideInstaller.ipa` release, signed with isideload's `sign_app` (device registered, app group, no Increased Memory Limit), as Side by Side does |
@@ -144,6 +159,60 @@ file is.
 `~/.siboot`: the pairing file (mode 600), isideload's store (signing key,
 anisette identity, saved token) and the download. The password is never
 written anywhere.
+
+## Pairing in Minis
+
+From iOS 27 an iPhone can pair *with itself*, but only one way round: a host
+advertises `_remotepairing-pairable-host._tcp` over Bonjour, Settings › Privacy &
+Security › Developer Mode lists it as "Pair with …", and the iPhone dials in and
+drives pair-setup. Dialling the iPhone instead only pair-*verifies*: it answers
+`allowsPairSetup: false`.
+
+The shell can't advertise: iOS refuses its multicast (no multicast entitlement),
+and an app may only publish the Bonjour types its Info.plist declares. Open
+Minis 1.16 declares this one and publishes it for the shell with
+`minis-bonjour advertise`, which forwards each connection to a port inside the
+shell ([`src/bridge.rs`](src/bridge.rs)). So siboot listens on a loopback port,
+has Minis advertise it as **siboot**, and answers with idevice's
+`PairableHost`, the responder SideInstaller uses ([`src/pairing.rs`](src/pairing.rs)):
+
+1. The page asks you to get ready, with what to do in Settings, and waits for
+   **Start pairing**. A "Pair with siboot" left by an earlier run that was
+   killed is withdrawn first.
+2. Minis advertises the pairing host under the host's identifier, as the
+   iPhone requires, with the seven TXT keys idevice gives. If iOS hasn't let
+   Minis use the local network yet (it asks the first time), or Minis's own
+   Settings › Network › Local Discovery is off, siboot says so and asks again.
+3. A notification says where to find the entry, posted while Minis is still in
+   front, so iOS can ask about notifications first if it hasn't.
+4. Silence plays through Minis's player (below) while you're in Settings. If
+   its sheet is closed or the silence paused while siboot waits, siboot starts
+   it again as soon as Minis is in front (`apple-player status`, every 3 s).
+5. When the iPhone asks for the code, it shows on the page in large digits and
+   comes as a notification. A stray connection or a mistyped code leaves the
+   entry up for another tap, three connections in all.
+6. The pairing file goes to `~/.siboot` (mode 600), with the host's altIRK, so
+   a later pairing keeps the same host identity. The entry is withdrawn.
+7. A notification asks you back to Minis. The silence stops once Minis is in
+   front again (`minis-bonjour list`), and siboot pair-verifies the new file
+   with the iPhone through LocalDevVPN.
+
+### Keeping Minis awake
+
+The pairing happens in Settings, with Minis in the background, and iOS
+suspends a background app within seconds. `minis-bonjour` withdraws its
+advertisements while Minis is suspended, so the "Pair with …" entry would
+vanish before it could be tapped. That's the likeliest reason Minis's own
+`pair_via_bonjour.py` (OpenMinis/MinisSkills, `ios-dev`) has never got the entry
+to show. SideInstaller and StikPair play silent audio through pairing for the
+same reason.
+
+Minis has background audio, and `apple-player play` plays a file with the
+playback session category, so siboot writes 16 minutes of silence (8 kHz, 8-bit
+WAV, 7.7 MB) to `~/.siboot` and plays it until pairing ends and you're back in
+Minis ([`src/keepalive.rs`](src/keepalive.rs)). The player opens as a sheet over
+whatever Minis shows (the page, or the terminal), and closing it stops the
+silence, so siboot says to leave it open, and closes it itself.
 
 ## Developer Mode
 
@@ -167,9 +236,10 @@ iPhone restarts at once, and Minis stops with it. iOS does that only while the
 iPhone has no passcode. With one, it refuses, and siboot shows the switch
 instead.
 
-It needs what the install needs: a pairing the iPhone accepts, and a tunnel
-that opens. So it can't bring the switch back on an iPhone that has never been
-paired, since pairing happens under that same Developer Mode page. Whether
+It needs what the install needs: a pairing the iPhone accepts (made first, the
+same way, if there isn't one), and a tunnel that opens. So it can't bring the
+switch back on an iPhone that has never been paired, since pairing happens under
+that same Developer Mode page. Whether
 iOS 27 still answers on its pairing port with Developer Mode off hasn't been
 tried.
 
@@ -201,11 +271,21 @@ its progress bar).
 ## Tests
 
 `cargo test` runs on any host (macOS included): the screen's pieces (widths,
-cutting and wrapping, keys as the terminal sends them, code boxes, the progress
-bar, boxes), the log's cleaning (emails, UDIDs, options without their values),
-the hand-off from rootshell
+cutting and wrapping, keys as the terminal sends them, code boxes, the pairing
+code's large digits, the progress bar, boxes), the log's cleaning (emails,
+UDIDs, options without their values), pairing in Minis against a fake iPhone
+([`src/fake_iphone.rs`](src/fake_iphone.rs), the iPhone's side of pair-setup:
+the handshake, SRP M1–M6 with the code, its identity in M5, checking the host's
+M6 signature) and stand-ins for Minis's `minis-bonjour`, `apple-notification` and
+`apple-player` (a pairing and the file it leaves, pairing again with the same
+host identity, the advertisement's name and TXT keys and its withdrawal, a
+leftover one withdrawn first, Local Network refused once and asked again, a
+Minis that can't advertise or has no `minis-bonjour`, the silence playing until
+Minis is in front again, its player closed and opened again, a mistyped code,
+three, a connection dropped before the code, nobody tapping), the hand-off from rootshell
 against a stand-in for siboot-pair's side (the right code, a mistyped one, three
-wrong ones, something that isn't a pairing file, nothing offered), argument
+wrong ones, something that isn't a pairing file, nothing offered, no code
+typed), argument
 parsing, `developer-mode` against stand-ins for lockdownd and AMFI (on already,
 off, unreadable, a declined restart, the passcode refusal, a hang-up), the bundle walk, 2FA answers, server order, the sign-in errors that
 stop it, install refusals, and rust-core's own `apple_session.rs` and
@@ -215,9 +295,12 @@ tested over real loopback connections: paths without the key, another Host,
 POSTs that aren't JSON or come from another origin, oversized requests, events
 replayed and resumed after a reconnect, one progress event a percent, every
 kind of question (an answer for another question refused, an empty one or a
-code that isn't six digits asked again, cancelling), Stop, and closing. siboot-pair's own
-tests, with a fake iPhone, are in
+code that isn't six digits asked again, cancelling, getting ready), Stop, and
+closing. siboot-pair's own tests, with the same fake iPhone, are in
 [`../rootshell`](../rootshell#tests).
+
+`cargo run --example screens` plays pairing in Minis as the page and the live
+screen show it (`-- rootshell` plays rootshell's hand-off instead).
 
 ## What's been tested
 
@@ -281,6 +364,19 @@ tests, with a fake iPhone, are in
   answering until it was resumed. `siboot --web check` on a Mac stopped at the
   iPhone, as it does there, and asked about the log on the page. A test build
   with `--web` ran in Minis on an iPhone: the sheet opened and the page worked.
+
+- **0.18.0** pairs in Minis again, now that Minis 1.16, which has
+  `minis-bonjour`, is on the App Store: 0.11 and 0.12 paired that way with
+  Minis's TestFlight build, and SideInstaller installed after it on an iPhone 16
+  on iOS 27 (2026-11-10). The pairing code is 0.12's, on today's page and live
+  screen; rootshell's hand-off stays for an older Minis, and is still taken
+  first whenever siboot-pair is offering. Tested on macOS and Alpine aarch64
+  (96 tests, the stand-ins for Minis's commands under busybox `sh` too), and
+  through `examples/screens.rs` as the page at an iPhone's size, on a
+  45-column live screen and as plain lines; the static build runs `--help`
+  and `check` in Alpine. Not run on an iPhone with Minis
+  1.16 from the App Store yet: its source isn't published yet, so whether its
+  `minis-bonjour` and Info.plist match the TestFlight build's is untested.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account at its
 certificate or App ID limit (siboot then asks which certificate to revoke), and
