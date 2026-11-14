@@ -374,9 +374,9 @@ screen show it (`-- rootshell` plays rootshell's hand-off instead).
   (96 tests, the stand-ins for Minis's commands under busybox `sh` too), and
   through `examples/screens.rs` as the page at an iPhone's size, on a
   45-column live screen and as plain lines; the static build runs `--help`
-  and `check` in Alpine. Not run on an iPhone with Minis
-  1.16 from the App Store yet: its source isn't published yet, so whether its
-  `minis-bonjour` and Info.plist match the TestFlight build's is untested.
+  and `check` in Alpine. A test build, installed from the `minis-pairing`
+  branch, worked on an iPhone with Open Minis 1.16 from the App Store
+  (2026-11-14): it paired in Minis, with no rootshell.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account at its
 certificate or App ID limit (siboot then asks which certificate to revoke), and
