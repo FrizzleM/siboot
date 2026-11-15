@@ -4,8 +4,7 @@ Installs SideInstaller onto the iPhone it runs on, signed with your own Apple
 Account, from the Linux shell of [Open Minis](https://apps.apple.com/app/id6759188481)
 (free, App Store): no computer, no certificate, no other app to pair with. Since
 Open Minis 1.16 (App Store, 2026-11-14) siboot pairs the iPhone with itself too
-([below](#pairing-in-minis)). With an older Minis, the pairing comes from
-siboot-pair in rootshell ([`../rootshell`](../rootshell)), as it did before.
+([below](#pairing-in-minis)), so it needs 1.16 or later.
 
 ## Running it
 
@@ -30,10 +29,11 @@ iOS pauses it in the background. The first time, trust your Apple Account in
 Settings › General › VPN & Device Management. Free accounts' apps last 7 days;
 SideInstaller can renew itself from then on.
 
-With Open Minis 1.15 or older, pair in rootshell first
-([`../rootshell`](../rootshell#running-it)) and leave it running: siboot takes
-its file for the transfer code it shows. siboot also takes rootshell's file
-whenever siboot-pair is offering one, in any Minis.
+In Open Minis 1.15 or older siboot stops at once and says to update Minis from
+the App Store (the page has a button for it). Minis doesn't tell the shell its
+version, so siboot goes by `minis-bonjour`, which came with 1.16. siboot still
+takes rootshell's file ([`../rootshell`](../rootshell#running-it)) whenever
+siboot-pair is offering one, for the transfer code it shows.
 
 To answer in the terminal instead, add `-s -- --terminal` after `sh` (or run
 `siboot --terminal` once it's installed).
@@ -377,6 +377,11 @@ screen show it (`-- rootshell` plays rootshell's hand-off instead).
   and `check` in Alpine. A test build, installed from the `minis-pairing`
   branch, worked on an iPhone with Open Minis 1.16 from the App Store
   (2026-11-14): it paired in Minis, with no rootshell.
+- **0.18.1** stops in an Open Minis older than 1.16 before anything else, with
+  its own message (update Open Minis in the App Store) and, on the page, an
+  Update Open Minis button that opens the App Store. Before, an older Minis
+  went on to step 2 and stopped there, pointing at rootshell, unless a saved
+  pairing still worked. No log is offered after it.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account at its
 certificate or App ID limit (siboot then asks which certificate to revoke), and

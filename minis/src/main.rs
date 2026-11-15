@@ -261,9 +261,8 @@ Open Minis, with your own Apple Account.
 {needs}
   iOS 27 or later, Developer Mode on, Wi-Fi,
   LocalDevVPN (App Store) connected, and
-  Open Minis 1.16 or later to pair here.
-  With an older Minis, pair with siboot-pair
-  in rootshell first.",
+  Open Minis 1.16 or later: siboot stops in
+  an older one.",
         name = head("siboot"),
         usage = head("USAGE"),
         commands = head("COMMANDS"),

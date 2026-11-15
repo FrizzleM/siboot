@@ -368,12 +368,11 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     if (took) head.append(make("span", "outcome-took", took));
     outcomeEl.append(head);
     for (const p of paragraphs) outcomeEl.append(make("p", null, p));
-    if (tone === "good") {
-      for (const link of links) {
-        const a = make("a", "button primary", link.label);
-        a.href = link.url;
-        outcomeEl.append(a);
-      }
+    // The app it installed, or the update a stop asks for.
+    for (const link of links) {
+      const a = make("a", "button primary", link.label);
+      a.href = link.url;
+      outcomeEl.append(a);
     }
     if (cause) {
       const more = make("details", "cause");

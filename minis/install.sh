@@ -1,8 +1,7 @@
 #!/bin/sh
 # Installs siboot into Open Minis and runs it, which pairs this iPhone with
-# itself (Open Minis 1.16 and later; with an older Minis, the pairing comes from
-# siboot-pair in rootshell), signs SideInstaller with your Apple Account and
-# installs it.
+# itself (Open Minis 1.16 and later; siboot stops in an older one), signs
+# SideInstaller with your Apple Account and installs it.
 #
 # In Minis's terminal (Minis › Settings › Terminal):
 #
@@ -15,7 +14,7 @@ BASE="${SIBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/main/mini
 # Of bin/siboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run. SIZE only draws the progress
 # bar.
-SHA256="930ee1cdddc434621bac6327f19e53cf6a2b309202a633504b68aa90189e55d5"
+SHA256="6e75aa036e90e24e41e22bcb193110db9be0d0aa933d0b348dc1d10a28146641"
 SIZE=12012376
 
 DIR="$HOME/.siboot/bin"

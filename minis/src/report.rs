@@ -20,7 +20,7 @@ pub const LOG_FILE: &str = "siboot.log";
 /// After a failure the user didn't choose: save the log, and on a terminal or
 /// the page ask whether to copy it.
 pub fn after_failure(args: &Args, f: &Fail) {
-    if f.by_user {
+    if f.by_user || f.known {
         return;
     }
     let text = compose(args);
