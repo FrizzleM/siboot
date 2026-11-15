@@ -5,6 +5,7 @@
 //! cargo run --example screens                  # an install, pairing in Minis
 //! cargo run --example screens -- rootshell     # taking rootshell's pairing
 //! cargo run --example screens -- stop          # one that stops at Connect
+//! cargo run --example screens -- old-minis     # in an Open Minis before 1.16
 //! cargo run --example screens -- developer-mode
 //! cargo run --example screens -- --plain       # the same, as plain lines
 //! cargo run --example screens -- --web         # the same, as the page
@@ -53,7 +54,14 @@ fn main() {
     }
     let devmode = has("developer-mode");
     let stop = has("stop");
-    let code = if run(devmode, stop, has("rootshell")) { 0 } else { 1 };
+    let code = if has("old-minis") {
+        old_minis();
+        1
+    } else if run(devmode, stop, has("rootshell")) {
+        0
+    } else {
+        1
+    };
     if stop && ui::confirm("copy the log to the clipboard?", true) {
         let log = ui::recorded().join("\n");
         let copied = std::process::Command::new("pbcopy")
@@ -78,15 +86,35 @@ fn main() {
     std::process::exit(code);
 }
 
+/// The stop in an Open Minis older than 1.16 (preflight.rs), with no log to
+/// offer after it.
+fn old_minis() {
+    ui::header("0.3.1", "Installs SideStore on this iPhone.");
+    ui::plan(
+        &["Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover"],
+        7,
+    );
+    ui::step(1, "Checking LocalDevVPN, this iPhone and the internet");
+    ui::activity("checking this Open Minis");
+    wait(400);
+    ui::link("Update Open Minis", "itms-apps://apps.apple.com/app/id6759188481");
+    ui::failure(
+        "This Open Minis is older than 1.16, and ssboot needs Open Minis 1.16 or later: it's the \
+         first that can pair this iPhone. Update Open Minis in the App Store, open it again and \
+         run ssboot.",
+        "",
+    );
+}
+
 fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
     let steps = [
         "Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover",
     ];
     if devmode {
-        ui::header("0.3.0", "Shows Developer Mode, or turns it on.");
+        ui::header("0.3.1", "Shows Developer Mode, or turns it on.");
         ui::plan(&["Check", "Pairing", "Connect", "Dev Mode"], 4);
     } else {
-        ui::header("0.3.0", "Installs SideStore on this iPhone.");
+        ui::header("0.3.1", "Installs SideStore on this iPhone.");
         ui::plan(&steps, 7);
     }
 

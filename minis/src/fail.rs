@@ -12,6 +12,9 @@ pub struct Fail {
     /// The user stopped the run (Ctrl-C, nothing typed, a cancelled
     /// sign-in): nothing went wrong, so ssboot doesn't offer its log.
     pub by_user: bool,
+    /// The cause is known and so is the fix (an Open Minis that's too old),
+    /// so there's no log to offer either.
+    pub known: bool,
 }
 
 impl Fail {
@@ -20,6 +23,16 @@ impl Fail {
             advice: advice.into(),
             raw: raw.into(),
             by_user: false,
+            known: false,
+        }
+    }
+
+    /// A failure whose cause ssboot knows for certain, and says: there's no
+    /// underlying error to show.
+    pub fn known(advice: impl Into<String>) -> Self {
+        Self {
+            known: true,
+            ..Self::new(advice, "")
         }
     }
 

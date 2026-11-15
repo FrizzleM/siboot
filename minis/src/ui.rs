@@ -611,8 +611,9 @@ pub fn failure(advice: &str, raw: &str) {
     ui.stopped = true;
 }
 
-/// A button on the page, in the box the run ends in (`finish`): the app it
-/// installed, say. Nothing on the terminal.
+/// A button on the page, in the box the run ends in (`finish` or `failure`):
+/// the app it installed, or the App Store for an update. Nothing on the
+/// terminal.
 pub fn link(label: &str, url: &str) {
     web::send(json!({"t": "link", "label": label, "url": url}));
 }

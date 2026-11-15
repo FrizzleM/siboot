@@ -6,9 +6,8 @@ Account, from the Linux shell of [Open Minis](https://apps.apple.com/app/id67591
 siboot (this repository's `main` branch, which installs SideInstaller) with
 SideStore in its place, installed and handed its pairing the way SideInstaller
 installs SideStore. Since Open Minis 1.16 (App Store, 2026-11-14) ssboot pairs
-the iPhone with itself too ([below](#pairing-in-minis)). With an older Minis,
-the pairing comes from ssboot-pair in rootshell ([`../rootshell`](../rootshell)),
-as it did before.
+the iPhone with itself too ([below](#pairing-in-minis)), so it needs 1.16 or
+later.
 
 ## Running it
 
@@ -33,10 +32,11 @@ and starts from siboot's signing certificate and sign-in. Then your Apple
 Account email, password and verification code. Keep Minis open until ssboot
 says it's done: iOS pauses it in the background.
 
-With Open Minis 1.15 or older, pair in rootshell first
-([`../rootshell`](../rootshell#running-it)) and leave it running: ssboot takes
-its file for the transfer code it shows. ssboot also takes rootshell's file
-whenever ssboot-pair is offering one, in any Minis.
+In Open Minis 1.15 or older ssboot stops at once and says to update Minis from
+the App Store (the page has a button for it). Minis doesn't tell the shell its
+version, so ssboot goes by `minis-bonjour`, which came with 1.16. ssboot still
+takes rootshell's file ([`../rootshell`](../rootshell#running-it)) whenever
+ssboot-pair is offering one, for the transfer code it shows.
 
 Then open SideStore (the page's last box has a button for it). The first time,
 trust your Apple Account in Settings › General › VPN & Device Management.
@@ -383,5 +383,10 @@ closing. ssboot-pair's own tests, with a fake iPhone, are in
   saved file, then siboot's, then rootshell's offer, then pairing here) and
   shows "Pair with ssboot". Tested on macOS and Alpine aarch64 (113 tests); not
   run on an iPhone yet.
+- **0.3.1** stops in an Open Minis older than 1.16 before anything else, with
+  its own message (update Open Minis in the App Store) and, on the page, an
+  Update Open Minis button that opens the App Store, as siboot 0.18.1 does.
+  Before, an older Minis went on to step 2 and stopped there, pointing at
+  rootshell, unless a saved pairing still worked. No log is offered after it.
 
-siboot's own history, up to 0.18.0, is in its README on the `main` branch.
+siboot's own history, up to 0.18.1, is in its README on the `main` branch.

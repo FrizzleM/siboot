@@ -1,8 +1,9 @@
 //! Step 1: is everything the later steps need actually here?
 //!
-//! Each check names what to change when it fails: the internet, for sign-in
-//! and the download, and LocalDevVPN, which carries everything to this iPhone.
-//! `ssboot check` also says whether this Open Minis can pair the iPhone.
+//! Each check names what to change when it fails: Open Minis, which has to be
+//! 1.16 or later, the internet, for sign-in and the download, and LocalDevVPN,
+//! which carries everything to this iPhone. `ssboot check` also says whether
+//! this Open Minis can pair the iPhone.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -11,11 +12,27 @@ use idevice::remote_pairing::{RemotePairingClient, RpPairingSocket};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
 
+use crate::bridge::{Bridge, BridgeError};
 use crate::fail::{chain, Fail, Result};
 use crate::{ui, Args, Command};
 
+/// Open Minis in the App Store app, for the page's button. The page hands
+/// links that aren't http to iOS, so this opens the App Store itself.
+pub const MINIS_APP_STORE: &str = "itms-apps://apps.apple.com/app/id6759188481";
+
+/// What an Open Minis older than 1.16 is told.
+pub const OLD_MINIS: &str = "This Open Minis is older than 1.16, and ssboot needs Open Minis 1.16 \
+     or later: it's the first that can pair this iPhone. Update Open Minis in the App Store, open \
+     it again and run ssboot.";
+
 /// True when the internet was checked too.
 pub async fn run(args: &Args) -> Result<bool> {
+    let in_minis = crate::web::available() || std::env::var_os("SSBOOT_MINIS_BIN").is_some();
+    if in_minis {
+        ui::activity("checking this Open Minis");
+        check_minis(&Bridge::from_env()).await?;
+        ui::ok("this Open Minis is 1.16 or later");
+    }
     // The tunnel stays on this iPhone; sign-in and the download don't.
     let online = args.command == Command::All || args.command == Command::Check;
     if online {
@@ -44,6 +61,22 @@ pub async fn run(args: &Args) -> Result<bool> {
         }
     }
     Ok(online)
+}
+
+/// Stop in an Open Minis older than 1.16. Minis doesn't tell the shell its
+/// version, but pairing needs `minis-bonjour`, which came with 1.16 (App
+/// Store, 2026-11-14): a Minis without it is older. Any other answer, a
+/// refusal included, comes from 1.16 or later, and is step 2's to explain.
+/// Only run inside Minis (`minis-open` on the PATH): elsewhere there's no
+/// `minis-bonjour` either.
+pub async fn check_minis(bridge: &Bridge) -> Result<()> {
+    match bridge.bonjour_types().await {
+        Err(BridgeError::Missing(_)) => {
+            ui::link("Update Open Minis", MINIS_APP_STORE);
+            Err(Fail::known(OLD_MINIS))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// GitHub (the IPA) and Apple's sign-in server answer over TLS. Apple's
@@ -185,4 +218,28 @@ fn unreachable(addr: SocketAddr, e: &std::io::Error) -> Fail {
         },
     };
     Fail::new(advice, format!("{e} ({:?})", e.kind()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fake_iphone;
+
+    #[tokio::test]
+    async fn an_open_minis_before_1_16_is_told_to_update() {
+        let home = std::env::temp_dir().join(format!("ssboot-test-minis-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let empty = home.join("no-commands");
+        std::fs::create_dir_all(&empty).unwrap();
+
+        let old = check_minis(&Bridge::in_dir(&empty)).await.err().unwrap();
+        assert_eq!(old.advice, OLD_MINIS);
+        assert!(old.known && !old.by_user && old.raw.is_empty());
+
+        let stub = fake_iphone::minis_stub(&home);
+        assert!(check_minis(&Bridge::in_dir(&stub)).await.is_ok());
+        // 1.16 without the type declared is still 1.16: step 2 says so.
+        std::fs::write(home.join("minis-undeclared"), b"").unwrap();
+        assert!(check_minis(&Bridge::in_dir(&stub)).await.is_ok());
+    }
 }
