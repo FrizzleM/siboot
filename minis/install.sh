@@ -1,8 +1,7 @@
 #!/bin/sh
 # Installs altboot into Open Minis and runs it, which pairs this iPhone with
-# itself (Open Minis 1.16 and later; with an older Minis, the pairing comes from
-# altboot-pair in rootshell), signs AltStore with your Apple Account and
-# installs it. altboot is siboot made to install AltStore instead of
+# itself (Open Minis 1.16 and later; altboot stops in an older one), signs
+# AltStore with your Apple Account and installs it. altboot is siboot made to install AltStore instead of
 # SideInstaller: this branch of FrizzleM/siboot.
 #
 # In Minis's terminal (Minis › Settings › Terminal):
@@ -16,7 +15,7 @@ BASE="${ALTBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/altboot/
 # Of bin/altboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run. SIZE only draws the progress
 # bar.
-SHA256="9ca1f59489c77729df5782b581b56210ab0854269e0eb80b35c6759b3e3c2031"
+SHA256="8d262aa3cbf9b4a4602351fddb32dee665796f1846dc5510eb745e3550dd01a3"
 SIZE=12143456
 
 DIR="$HOME/.altboot/bin"

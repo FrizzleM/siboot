@@ -14,8 +14,9 @@
 //! app instead, and forwards each connection to a port inside the shell.
 //!
 //! `minis-bonjour` came with Minis 1.16 (App Store, 2026-11-14; its TestFlight
-//! builds from late October). 1.15 and earlier don't have it, so there altboot
-//! takes the pairing from rootshell instead (pairing.rs).
+//! builds from late October). 1.15 and earlier don't have it, and Minis
+//! doesn't tell the shell its version, so its absence is how altboot knows a
+//! Minis is too old and stops (preflight.rs).
 
 use std::fmt;
 use std::path::{Path, PathBuf};

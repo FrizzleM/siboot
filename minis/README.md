@@ -8,9 +8,8 @@ altboot is siboot 0.18.0 (this repository's `main` branch, which installs
 SideInstaller) made to install AltStore the way SideInstaller installs it
 ([below](#altstore)). Everything before the download is siboot's: the page,
 pairing this iPhone with itself in Minis 1.16
-([below](#pairing-in-minis)), the tunnel, the sign-in and the install. With an
-older Minis, the pairing comes from altboot-pair in rootshell
-([`../rootshell`](../rootshell)).
+([below](#pairing-in-minis)), the tunnel, the sign-in and the install, so it
+needs Open Minis 1.16 or later.
 
 ## Running it
 
@@ -46,10 +45,11 @@ Then, as altboot's last box says:
    connected while AltStore installs or refreshes apps. Free accounts' apps last
    7 days, so refresh them before then.
 
-With Open Minis 1.15 or older, pair in rootshell first
-([`../rootshell`](../rootshell#running-it)) and leave it running: altboot takes
-its file for the transfer code it shows. altboot also takes rootshell's file
-whenever altboot-pair is offering one, in any Minis.
+In Open Minis 1.15 or older altboot stops at once and says to update Minis from
+the App Store (the page has a button for it). Minis doesn't tell the shell its
+version, so altboot goes by `minis-bonjour`, which came with 1.16. altboot still
+takes rootshell's file ([`../rootshell`](../rootshell#running-it)) whenever
+altboot-pair is offering one, for the transfer code it shows.
 
 To answer in the terminal instead, add `-s -- --terminal` after `sh` (or run
 `altboot --terminal` once it's installed).
@@ -405,6 +405,11 @@ live screen show it (`-- rootshell` plays rootshell's hand-off instead).
   signing AltStore, installing it, AltStore picking up the file and setting up
   Remote AltServer follow SideInstaller's code, whose own notes list them as
   not verified on a device either.
+- **0.1.1** stops in an Open Minis older than 1.16 before anything else, with
+  its own message (update Open Minis in the App Store) and, on the page, an
+  Update Open Minis button that opens the App Store, as siboot 0.18.1 does.
+  Before, an older Minis went on to step 2 and stopped there, pointing at
+  rootshell, unless a saved pairing still worked. No log is offered after it.
 
 Not tested yet: an iPhone at all, an Apple Account at its certificate or App ID
 limit (altboot then asks which certificate to revoke), and a second run after
