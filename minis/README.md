@@ -389,4 +389,10 @@ closing. ssboot-pair's own tests, with a fake iPhone, are in
   Before, an older Minis went on to step 2 and stopped there, pointing at
   rootshell, unless a saved pairing still worked. No log is offered after it.
 
+- **0.3.2** signs in with the Apple Account email in lowercase, as siboot 0.16.2
+  does (ssboot branched before it). GrandSlam's SRP proof hashes the name as
+  sent, so an email typed with a capital was told the account or password was
+  wrong. A signing key saved under the capitalized spelling is moved to the
+  lowercase one, so it's kept. From here `ssboot` takes `main` by merging it.
+
 siboot's own history, up to 0.18.1, is in its README on the `main` branch.

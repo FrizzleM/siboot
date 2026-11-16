@@ -89,7 +89,7 @@ fn main() {
 /// The stop in an Open Minis older than 1.16 (preflight.rs), with no log to
 /// offer after it.
 fn old_minis() {
-    ui::header("0.3.1", "Installs SideStore on this iPhone.");
+    ui::header("0.3.2", "Installs SideStore on this iPhone.");
     ui::plan(
         &["Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover"],
         7,
@@ -111,10 +111,10 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
         "Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover",
     ];
     if devmode {
-        ui::header("0.3.1", "Shows Developer Mode, or turns it on.");
+        ui::header("0.3.2", "Shows Developer Mode, or turns it on.");
         ui::plan(&["Check", "Pairing", "Connect", "Dev Mode"], 4);
     } else {
-        ui::header("0.3.1", "Installs SideStore on this iPhone.");
+        ui::header("0.3.2", "Installs SideStore on this iPhone.");
         ui::plan(&steps, 7);
     }
 
