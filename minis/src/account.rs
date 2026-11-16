@@ -4,12 +4,17 @@
 //! unchanged (see main.rs): a saved developer token first, then a full
 //! GrandSlam sign-in with two-factor, the -80046 skip for Android-ADI servers,
 //! and the current-Mac identity rules. What's added is the terminal: the
-//! prompts, and the order servers are tried in.
+//! prompts, the order servers are tried in, and which team signs when Apple
+//! lists more than one (team.rs).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use isideload::auth::apple_account::{TwoFactorCallbackParams, TwoFactorCallbackResponse};
 use isideload::dev::certificates::DevelopmentCertificate;
+use isideload::dev::developer_session::DeveloperSession;
+use isideload::dev::device_type::{dev_url, DeveloperDeviceType};
+use isideload::dev::teams::{DeveloperTeam, TeamsApi};
 use isideload::sideload::builder::MaxCertsBehavior;
 use isideload::sideload::sideloader::Sideloader;
 use isideload::sideload::{SideloaderBuilder, TeamSelection};
@@ -18,6 +23,7 @@ use rootcause::Report;
 
 use crate::apple_session;
 use crate::fail::{Fail, Result};
+use crate::team::{self, Kind};
 use crate::{ui, Args};
 
 /// Anisette servers on Apple's macOS ADI library, in the order SideInstaller's
@@ -39,8 +45,14 @@ const MACHINE_NAME: &str = "siboot";
 
 pub struct Session {
     pub sideloader: Sideloader,
-    /// The developer team signing for it, as "name (ID)".
+    /// The developer team signing for it, as the step's summary: "paid team
+    /// Frizzle (ABCDE12345)".
     pub team: String,
+    /// Free or paid, when Apple listed more than one team to pick from.
+    pub kind: Kind,
+    /// Whether it's the first team Apple lists, the one SideInstaller renews
+    /// itself with.
+    pub first: bool,
 }
 
 pub async fn sign_in(args: &Args) -> Result<Session> {
@@ -105,8 +117,10 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
         )
         .await
         {
-            Ok((developer, teams)) => {
+            Ok((mut developer, teams)) => {
                 remember_server(&args.home, server);
+                let (picked, kind, first) = pick_team(&mut developer, teams).await?;
+                let team = team::summary(picked.name.as_deref(), &picked.team_id, kind);
                 let mut sideloader = SideloaderBuilder::new(developer, apple_id.clone())
                     .team_selection(TeamSelection::First)
                     .max_certs_behavior(MaxCertsBehavior::Prompt(Box::new(
@@ -115,22 +129,16 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
                     .storage(Box::new(FsStorage::new(storage.clone())))
                     .machine_name(MACHINE_NAME.to_string())
                     .build();
-                if let Some(first) = teams.into_iter().next() {
-                    sideloader.set_team(first);
-                }
-                let team = sideloader.get_team().await.map_err(|e| {
-                    Fail::new(
-                        "Signed in, but Apple didn't list a developer team.",
-                        crate::error_text::report_text(&e),
-                    )
-                })?;
-                let team = format!(
-                    "{} ({})",
-                    team.name.as_deref().unwrap_or("unnamed"),
-                    team.team_id
-                );
-                ui::ok(&format!("signed in — team {team}"));
-                return Ok(Session { sideloader, team });
+                // `open` has just listed the teams, so the one picked is
+                // handed over rather than listed again.
+                sideloader.set_team(picked);
+                ui::ok(&format!("signed in — {team}"));
+                return Ok(Session {
+                    sideloader,
+                    team,
+                    kind,
+                    first,
+                });
             }
             Err(e) => {
                 if let Some(advice) = stops_sign_in(&e) {
@@ -154,6 +162,73 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
         ),
         last_error,
     ))
+}
+
+/// The team that signs: the only one Apple lists, or the one picked when it
+/// lists more (a paid membership and the free team every account has, or a
+/// company's team), each marked free or paid. Apple's order is kept, so the
+/// menu starts on the first: the team siboot took before 0.19.0, and the one
+/// SideInstaller renews itself with. Also says whether that's the one picked.
+async fn pick_team(
+    developer: &mut DeveloperSession,
+    mut teams: Vec<DeveloperTeam>,
+) -> Result<(DeveloperTeam, Kind, bool)> {
+    let none = "Signed in, but Apple didn't list a developer team.";
+    if teams.is_empty() {
+        // Asked once more, as isideload's `get_team` did before 0.19.0.
+        teams = developer
+            .list_teams()
+            .await
+            .map_err(|e| Fail::new(none, crate::error_text::report_text(&e)))?;
+    }
+    if teams.len() < 2 {
+        let only = teams
+            .pop()
+            .ok_or_else(|| Fail::new(none, "No developer teams available"))?;
+        return Ok((only, Kind::Unknown, true));
+    }
+    ui::status("reading your teams");
+    let known = match list_kinds(developer).await {
+        Ok(known) => known,
+        Err(e) => {
+            ui::detail(&format!(
+                "couldn't tell free teams from paid ones: {}",
+                first_line(&crate::error_text::report_text(&e))
+            ));
+            HashMap::new()
+        }
+    };
+    let kinds: Vec<Kind> = teams
+        .iter()
+        .map(|t| known.get(&t.team_id).copied().unwrap_or(Kind::Unknown))
+        .collect();
+    let labels: Vec<String> = teams
+        .iter()
+        .zip(&kinds)
+        .map(|(t, kind)| team::label(t.name.as_deref(), &t.team_id, *kind))
+        .collect();
+    ui::status(&team::found(teams.len()));
+    ui::note(team::NOTE);
+    match ui::choose(team::QUESTION, &labels) {
+        Some(i) if i < teams.len() => Ok((teams.swap_remove(i), kinds[i], i == 0)),
+        _ => Err(Fail::by_user("No developer team picked.")),
+    }
+}
+
+/// Each team's kind, from Apple's listTeams asked again: isideload's
+/// `DeveloperTeam` leaves out the memberships, and they're what tells a free
+/// team from a paid one. Only asked when there's a choice to make.
+async fn list_kinds(
+    developer: &mut DeveloperSession,
+) -> std::result::Result<HashMap<String, Kind>, Report> {
+    let listed: Vec<team::Listed> = developer
+        .send_dev_request(
+            &dev_url("listTeams", DeveloperDeviceType::Any),
+            None,
+            "teams",
+        )
+        .await?;
+    Ok(team::kinds(&listed))
 }
 
 /// `pick` alone when given; otherwise the last server that worked, then the

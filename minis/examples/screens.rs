@@ -6,6 +6,7 @@
 //! cargo run --example screens -- rootshell     # taking rootshell's pairing
 //! cargo run --example screens -- stop          # one that stops at Connect
 //! cargo run --example screens -- old-minis     # in an Open Minis before 1.16
+//! cargo run --example screens -- teams         # an Apple Account on two teams
 //! cargo run --example screens -- developer-mode
 //! cargo run --example screens -- --plain       # the same, as plain lines
 //! cargo run --example screens -- --web         # the same, as the page
@@ -23,6 +24,8 @@
 
 #![allow(dead_code)]
 
+#[path = "../src/team.rs"]
+mod team;
 #[path = "../src/ui.rs"]
 mod ui;
 #[path = "../src/web.rs"]
@@ -57,7 +60,7 @@ fn main() {
     let code = if has("old-minis") {
         old_minis();
         1
-    } else if run(devmode, stop, has("rootshell")) {
+    } else if run(devmode, stop, has("rootshell"), has("teams")) {
         0
     } else {
         1
@@ -106,7 +109,7 @@ fn old_minis() {
     );
 }
 
-fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
+fn run(devmode: bool, stop: bool, rootshell: bool, teams: bool) -> bool {
     let steps = [
         "Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover",
     ];
@@ -284,8 +287,32 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
     }
     ui::status("checking the code with Apple");
     wait(900);
-    ui::ok(&format!("signed in as {email} — team Frizzle (ABCDE12345)"));
-    ui::done("team Frizzle (ABCDE12345)");
+    let (name, id, kind, first) = if teams {
+        // In Apple's order, which account.rs keeps: here the free team first.
+        let listed = [
+            ("Frizzle", "ABCDE12345", team::Kind::Free),
+            ("Frizzle", "FGHIJ67890", team::Kind::Paid),
+        ];
+        ui::status("reading your teams");
+        wait(700);
+        let labels: Vec<String> = listed
+            .iter()
+            .map(|(name, id, kind)| team::label(Some(name), id, *kind))
+            .collect();
+        ui::status(&team::found(listed.len()));
+        ui::note(team::NOTE);
+        let Some(i) = ui::choose(team::QUESTION, &labels) else {
+            ui::failure("No developer team picked.", "");
+            return false;
+        };
+        let (name, id, kind) = listed[i];
+        (name, id, kind, i == 0)
+    } else {
+        ("Frizzle", "ABCDE12345", team::Kind::Unknown, true)
+    };
+    let summary = team::summary(Some(name), id, kind);
+    ui::ok(&format!("signed in as {email} — {summary}"));
+    ui::done(&summary);
 
     ui::step(5, "Signing SideInstaller for this iPhone");
     ui::status("downloading SideInstaller");
@@ -298,7 +325,9 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
     ui::ok("downloaded SideInstaller (24.4 MB)");
     ui::status("signing; this takes a while here");
     wait(4200);
-    ui::ok("signed SideInstaller as com.frizzlem.sideinstaller.ABCDE12345");
+    ui::ok(&format!(
+        "signed SideInstaller as com.frizzlem.sideinstaller.{id}"
+    ));
     ui::done("SideInstaller 1.7.0 signed");
 
     ui::step(6, "Installing it");
@@ -317,7 +346,9 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
         wait(70);
     }
     ui::progress_end();
-    ui::ok("SideInstaller installed (com.frizzlem.sideinstaller.ABCDE12345)");
+    ui::ok(&format!(
+        "SideInstaller installed (com.frizzlem.sideinstaller.{id})"
+    ));
     ui::done("installed · 51.0 MB, 412 files");
 
     ui::step(7, "Handing SideInstaller the pairing");
@@ -331,7 +362,7 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
         &[
             "Open it from your Home Screen. The first time, iOS asks you to trust your Apple \
              Account: Settings › General › VPN & Device Management.",
-            "Free accounts' apps last 7 days; SideInstaller can renew itself from then on.",
+            team::lasts(kind, first),
         ],
     );
     true

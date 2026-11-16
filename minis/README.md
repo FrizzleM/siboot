@@ -24,10 +24,13 @@ the 6-digit code siboot shows (it also comes as a notification). A player opens
 over Minis meanwhile: leave it open, it keeps Minis running while you're in
 Settings. Go back to Minis once Settings says it's paired. After that siboot
 uses the pairing file it saved and doesn't ask. Then your Apple Account email,
-password and verification code. Keep Minis open until siboot says it's done:
-iOS pauses it in the background. The first time, trust your Apple Account in
-Settings › General › VPN & Device Management. Free accounts' apps last 7 days;
-SideInstaller can renew itself from then on.
+password and verification code, and, if the account is on more than one
+developer team (a paid membership and the free team every account has, say),
+which team signs ([below](#more-than-one-team)). Keep Minis open until siboot
+says it's done: iOS pauses it in the background. The first time, trust your
+Apple Account in Settings › General › VPN & Device Management. Free accounts'
+apps last 7 days; SideInstaller can renew itself from then on. A paid team's
+last a year.
 
 In Open Minis 1.15 or older siboot stops at once and says to update Minis from
 the App Store (the page has a button for it). Minis doesn't tell the shell its
@@ -72,8 +75,8 @@ about 45 columns), and the live area kept shorter than the screen, so it redraws
 in place. With `--plain` or `--verbose`, `TERM=dumb`, `SIBOOT_PLAIN` set, or
 without a terminal on both ends, siboot prints plain lines instead, one per
 event, as before. `cargo run --example screens` plays the screen through a
-made-up run, on a Mac and without an iPhone (`-- stop`, `-- developer-mode` and
-`-- --plain` for the others).
+made-up run, on a Mac and without an iPhone (`-- stop`, `-- developer-mode`,
+`-- teams` and `-- --plain` for the others).
 
 ## The page
 
@@ -92,7 +95,8 @@ which has a button that opens SideInstaller once it's installed. Show details
 adds what `--verbose` adds. The questions are fields and buttons: the email
 with the email keyboard, the password as dots, the codes in boxes that send
 themselves at the sixth digit (marked as one-time codes, which iOS can offer to
-fill from Messages), Other ways for Apple's code, and yes or no. Pairing shows
+fill from Messages), Other ways for Apple's code, a button for each team when
+there's a choice, and yes or no. Pairing shows
 what to do in Settings on a card with **Start pairing**, then the pairing code
 in large digits on a card of its own while Settings waits for it. Stop, tapped
 twice, stops the run as Ctrl-C does.
@@ -147,7 +151,7 @@ file is.
 | 1 | Check | GitHub and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN |
 | 2 | Pairing | the file saved in `~/.siboot` on an earlier run, while the iPhone accepts it; else the one siboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), when it's offering; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
 | 3 | Connect | pair-verify → `createListener` → TLS-PSK → CDTunnel → software TCP → RSD, as `tunnel_create_rppairing_multihost` does; lockdownd gives the UDID |
-| 4 | Apple ID | rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order |
+| 4 | Apple ID | rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order; then the team, picked when Apple lists more than one ([below](#more-than-one-team)) |
 | 5 | Sign | the latest `SideInstaller.ipa` release, signed with isideload's `sign_app` (device registered, app group, no Increased Memory Limit), as Side by Side does |
 | 6 | Install | AFC upload to `/PublicStaging`, every file checked, `installation_proxy` with `PackageType: Developer` |
 | 7 | Hand over | house_arrest writes the pairing file to `Library/Application Support/rp_pairing_file.plist` and marks it imported (`importedPairingFileName`), as Side by Side hands one to SideInstaller |
@@ -159,6 +163,31 @@ file is.
 `~/.siboot`: the pairing file (mode 600), isideload's store (signing key,
 anisette identity, saved token) and the download. The password is never
 written anywhere.
+
+## More than one team
+
+Apple lists every developer team an Apple Account is on: the free one every
+account has (Xcode's Personal Team), and a paid Apple Developer Program
+membership too when there is one, the account's own or a company's. Until
+0.19.0 siboot took the first. Now, when there's more than one, it asks which
+signs ([`src/team.rs`](src/team.rs)), each marked **Free** or **Paid**: what a
+free team signs lasts 7 days, what a paid team signs, a year.
+
+- listTeams doesn't say free or paid outright, and isideload keeps only each
+  team's name, ID and type, so siboot asks Apple for the list once more and
+  reads the memberships as AltSign does (AltStore and SideStore go by it): a
+  company's or organization's team is paid; an individual's is free when its
+  one membership has "free" in its name, and paid otherwise. A team it can't
+  tell is listed without either, and so is every team if that request fails.
+  With one team there's no question and no extra request.
+- The teams stay in Apple's order and the menu starts on the first, so return
+  takes the team siboot took before. It's also the one SideInstaller signs
+  with when it renews itself (its rust-core still takes the first), so signed
+  by another team, SideInstaller can't renew itself in place: unless the team
+  is paid, the box the run ends in says to run siboot again instead.
+- The team's ID ends SideInstaller's bundle ID, so picking another team than
+  last time installs a second copy beside the first.
+- Back, Esc or an empty answer stops the run, and no log is offered.
 
 ## Pairing in Minis
 
@@ -288,7 +317,8 @@ wrong ones, something that isn't a pairing file, nothing offered, no code
 typed), argument
 parsing, `developer-mode` against stand-ins for lockdownd and AMFI (on already,
 off, unreadable, a declined restart, the passcode refusal, a hang-up), the bundle walk, 2FA answers, server order, the sign-in errors that
-stop it, install refusals, and rust-core's own `apple_session.rs` and
+stop it, which teams in a listTeams answer are free or paid and how the
+question lists them, install refusals, and rust-core's own `apple_session.rs` and
 `error_text.rs` tests. A test also stands in for a rootshell that iOS has
 paused: the connection goes through and nothing answers. The page's server is
 tested over real loopback connections: paths without the key, another Host,
@@ -300,7 +330,8 @@ closing. siboot-pair's own tests, with the same fake iPhone, are in
 [`../rootshell`](../rootshell#tests).
 
 `cargo run --example screens` plays pairing in Minis as the page and the live
-screen show it (`-- rootshell` plays rootshell's hand-off instead).
+screen show it (`-- rootshell` plays rootshell's hand-off instead, and
+`-- teams` asks which of two teams signs).
 
 ## What's been tested
 
@@ -382,7 +413,18 @@ screen show it (`-- rootshell` plays rootshell's hand-off instead).
   Update Open Minis button that opens the App Store. Before, an older Minis
   went on to step 2 and stopped there, pointing at rootshell, unless a saved
   pairing still worked. No log is offered after it.
+- **0.19.0** asks which developer team signs when Apple lists more than one,
+  each marked free or paid ([above](#more-than-one-team)); with one team
+  nothing changes. Tested on macOS and Alpine aarch64 (102 tests, the new
+  ones reading a made-up listTeams answer), and through
+  `examples/screens.rs -- teams` as the page at an iPhone's size (the paid
+  team picked, and Back), on a 45-column live screen (a digit, return and
+  Esc) and as plain lines; `install.sh` installed the static build in
+  Alpine, skipped a current copy and refused a tampered one, and the build
+  ran `check` there. Not signed in to Apple with an account on two teams yet,
+  so the free-or-paid rule is AltSign's, not yet seen against Apple's answer
+  here.
 
-Not tested yet: other iPhones and iOS versions, an Apple Account at its
-certificate or App ID limit (siboot then asks which certificate to revoke), and
-a second run after the 7-day profile expires.
+Not tested yet: other iPhones and iOS versions, an Apple Account on more than
+one team, one at its certificate or App ID limit (siboot then asks which
+certificate to revoke), and a second run after the 7-day profile expires.

@@ -35,6 +35,7 @@ mod preflight;
 mod report;
 mod seed;
 mod sign;
+mod team;
 mod tunnel;
 mod ui;
 mod web;
@@ -521,7 +522,7 @@ async fn pipeline(args: &Args) -> Result<()> {
 
     ui::step(4, "Signing in to your Apple Account");
     let mut session = account::sign_in(args).await?;
-    ui::done(&format!("team {}", session.team));
+    ui::done(&session.team);
 
     ui::step(5, "Signing SideInstaller for this iPhone");
     let ipa = sign::fetch_ipa(args).await?;
@@ -548,7 +549,7 @@ async fn pipeline(args: &Args) -> Result<()> {
         &[
             "Open it from your Home Screen. The first time, iOS asks you to trust your Apple \
              Account: Settings › General › VPN & Device Management.",
-            "Free accounts' apps last 7 days; SideInstaller can renew itself from then on.",
+            team::lasts(session.kind, session.first),
         ],
     );
     Ok(())
