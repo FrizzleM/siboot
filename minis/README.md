@@ -29,8 +29,10 @@ Settings. Go back to Minis once Settings says it's paired. After that ssboot
 uses the pairing file it saved and doesn't ask. If siboot has run in this Minis,
 ssboot takes the pairing file siboot saved instead, so it doesn't pair again,
 and starts from siboot's signing certificate and sign-in. Then your Apple
-Account email, password and verification code. Keep Minis open until ssboot
-says it's done: iOS pauses it in the background.
+Account email, password and verification code, and, if the account is on more
+than one developer team (a paid membership and the free team every account
+has, say), which team signs ([below](#more-than-one-team)). Keep Minis open
+until ssboot says it's done: iOS pauses it in the background.
 
 In Open Minis 1.15 or older ssboot stops at once and says to update Minis from
 the App Store (the page has a button for it). Minis doesn't tell the shell its
@@ -124,8 +126,8 @@ about 45 columns), and the live area kept shorter than the screen, so it redraws
 in place. With `--plain` or `--verbose`, `TERM=dumb`, `SSBOOT_PLAIN` set, or
 without a terminal on both ends, ssboot prints plain lines instead, one per
 event. `cargo run --example screens` plays the screen through a made-up run, on
-a Mac and without an iPhone (`-- stop`, `-- developer-mode` and `-- --plain` for
-the others).
+a Mac and without an iPhone (`-- stop`, `-- developer-mode`, `-- teams` and
+`-- --plain` for the others).
 
 ## The page
 
@@ -144,7 +146,8 @@ which has a button that opens SideInstaller once it's installed. Show details
 adds what `--verbose` adds. The questions are fields and buttons: the email
 with the email keyboard, the password as dots, the codes in boxes that send
 themselves at the sixth digit (marked as one-time codes, which iOS can offer to
-fill from Messages), Other ways for Apple's code, and yes or no. Pairing shows
+fill from Messages), Other ways for Apple's code, a button for each team when
+there's a choice, and yes or no. Pairing shows
 what to do in Settings on a card with **Start pairing**, then the pairing code
 in large digits on a card of its own while Settings waits for it. Stop, tapped
 twice, stops the run as Ctrl-C does.
@@ -199,7 +202,7 @@ file is.
 | 1 | Check | GitHub (SideStore's nightly) and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN |
 | 2 | Pairing | the file saved in `~/.ssboot` on an earlier run, while the iPhone accepts it; else the one siboot saved in `~/.siboot`, which is then copied; else the one ssboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), when it's offering; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
 | 3 | Connect | pair-verify → `createListener` → TLS-PSK → CDTunnel → software TCP → RSD, as `tunnel_create_rppairing_multihost` does; lockdownd gives the UDID |
-| 4 | Apple ID | rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order. The first time, from a copy of siboot's isideload store when there is one |
+| 4 | Apple ID | rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order. The first time, from a copy of siboot's isideload store when there is one; then the team, picked when Apple lists more than one ([below](#more-than-one-team)) |
 | 5 | Sign | SideStore's nightly, read first (SideStore? which pairing files does it read? does it take `Account.sideconf` quietly?), then signed with isideload's `sign_app` (device registered, app group, no Increased Memory Limit), as SideInstaller signs it |
 | 6 | Install | AFC upload to `/PublicStaging`, every file checked, `installation_proxy` with `PackageType: Developer` |
 | 7 | Hand over | house_arrest writes the pairing files and settings [above](#what-sidestore-is-handed) into SideStore's container |
@@ -211,6 +214,30 @@ file is.
 `~/.ssboot`: the pairing file (mode 600), isideload's store (signing key,
 anisette identity, saved token) and the download. The password is never
 written anywhere. Nothing is written into `~/.siboot`: ssboot only reads it.
+
+## More than one team
+
+Apple lists every developer team an Apple Account is on: the free one every
+account has (Xcode's Personal Team), and a paid Apple Developer Program
+membership too when there is one, the account's own or a company's. Until
+0.3.3 ssboot took the first. Now, when there's more than one, it asks which
+signs ([`src/team.rs`](src/team.rs)), each marked **Free** or **Paid**: what a
+free team signs lasts 7 days, what a paid team signs, a year.
+
+- listTeams doesn't say free or paid outright, and isideload keeps only each
+  team's name, ID and type, so ssboot asks Apple for the list once more and
+  reads the memberships as AltSign does (AltStore and SideStore go by it): a
+  company's or organization's team is paid; an individual's is free when its
+  one membership has "free" in its name, and paid otherwise. A team it can't
+  tell is listed without either, and so is every team if that request fails.
+  With one team there's no question and no extra request.
+- The teams stay in Apple's order and the menu starts on the first, so return
+  takes the team ssboot took before. SideStore picks its own team when you
+  sign in to it, so the box the run ends in only says how long a free or a
+  paid team's apps last.
+- The team's ID ends SideStore's bundle ID, so picking another team than last
+  time installs a second copy beside the first.
+- Back, Esc or an empty answer stops the run, and no log is offered.
 
 ## Pairing in Minis
 
@@ -339,7 +366,8 @@ the hand-off from rootshell against a stand-in for ssboot-pair's side (the
 right code, a mistyped one, three wrong ones, something that isn't a pairing
 file, nothing offered, no code typed, a paused rootshell), argument
 parsing, `developer-mode` against stand-ins for lockdownd and AMFI, the bundle
-walk, 2FA answers, server order, the sign-in errors that stop it, install
+walk, 2FA answers, server order, the sign-in errors that stop it, which teams in a
+listTeams answer are free or paid and how the question lists them, install
 refusals, and rust-core's own `apple_session.rs` and `error_text.rs` tests.
 The page's server is tested over real loopback connections: paths without the
 key, another Host, POSTs that aren't JSON or come from another origin, oversized
@@ -352,6 +380,8 @@ closing. ssboot-pair's own tests, with a fake iPhone, are in
 
 `cargo test -- --ignored` also reads a real SideStore IPA, named by
 `SSBOOT_SIDESTORE_IPA`, as step 5 does.
+
+`cargo run --example screens -- teams` asks which of two teams signs.
 
 ## What's been tested
 
@@ -395,4 +425,10 @@ closing. ssboot-pair's own tests, with a fake iPhone, are in
   wrong. A signing key saved under the capitalized spelling is moved to the
   lowercase one, so it's kept. From here `ssboot` takes `main` by merging it.
 
-siboot's own history, up to 0.18.1, is in its README on the `main` branch.
+- **0.3.3** merges siboot 0.19.0: when Apple lists more than one developer
+  team, ssboot asks which signs, each marked free or paid
+  ([above](#more-than-one-team)). Tested as siboot 0.19.0 was, and ssboot's
+  own tests on macOS and Alpine aarch64. Not signed in to Apple with an
+  account on two teams yet.
+
+siboot's own history, up to 0.19.0, is in its README on the `main` branch.

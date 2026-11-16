@@ -37,6 +37,8 @@ mod pairing;
 mod preflight;
 mod report;
 mod sign;
+#[allow(dead_code)] // `lasts` is SideInstaller's: ssboot uses `lasts_sidestore`
+mod team;
 mod tunnel;
 mod ui;
 mod web;
@@ -530,7 +532,7 @@ async fn pipeline(args: &Args) -> Result<()> {
 
     ui::step(4, "Signing in to your Apple Account");
     let mut session = account::sign_in(args).await?;
-    ui::done(&format!("team {}", session.team));
+    ui::done(&session.team);
 
     ui::step(5, "Signing SideStore for this iPhone");
     let ipa = sign::fetch_ipa(args).await?;
@@ -601,7 +603,7 @@ async fn pipeline(args: &Args) -> Result<()> {
     if !handed.certificate {
         next.push("If it offers to resign itself when you sign in, let it.");
     }
-    next.push("Free accounts' apps last 7 days: refresh them in SideStore before then.");
+    next.push(team::lasts_sidestore(session.kind));
     // Its own URL scheme (Info.plist): the page's button opens it.
     ui::link("Open SideStore", "sidestore://");
     ui::finish("SideStore is installed", &next);
