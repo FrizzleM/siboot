@@ -126,8 +126,8 @@ about 45 columns), and the live area kept shorter than the screen, so it redraws
 in place. With `--plain` or `--verbose`, `TERM=dumb`, `SSBOOT_PLAIN` set, or
 without a terminal on both ends, ssboot prints plain lines instead, one per
 event. `cargo run --example screens` plays the screen through a made-up run, on
-a Mac and without an iPhone (`-- stop`, `-- developer-mode`, `-- teams` and
-`-- --plain` for the others).
+a Mac and without an iPhone (`-- stop`, `-- developer-mode`, `-- teams`,
+`-- moved`, `-- nowhere` and `-- --plain` for the others).
 
 ## The page
 
@@ -199,7 +199,7 @@ file is.
 
 | # | Step | How |
 |---|---|---|
-| 1 | Check | GitHub (SideStore's nightly) and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN |
+| 1 | Check | GitHub (SideStore's nightly) and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN, or on the port its pairing service has instead ([below](#the-pairing-port)) |
 | 2 | Pairing | the file saved in `~/.ssboot` on an earlier run, while the iPhone accepts it; else the one siboot saved in `~/.siboot`, which is then copied; else the one ssboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), when it's offering; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
 | 3 | Connect | pair-verify → `createListener` → TLS-PSK → CDTunnel → software TCP → RSD, as `tunnel_create_rppairing_multihost` does; lockdownd gives the UDID |
 | 4 | Apple ID | rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order. The first time, from a copy of siboot's isideload store when there is one; then the team, picked when Apple lists more than one ([below](#more-than-one-team)) |
@@ -214,6 +214,34 @@ file is.
 `~/.ssboot`: the pairing file (mode 600), isideload's store (signing key,
 anisette identity, saved token) and the download. The password is never
 written anywhere. Nothing is written into `~/.siboot`: ssboot only reads it.
+
+## The pairing port
+
+ssboot reaches the iPhone's pairing service (remotepairingd's RPPairing
+listener) at `10.7.0.1:49152` through LocalDevVPN, as SideInstaller and
+StikDebug do. That port isn't fixed. The listener takes whatever port iOS hands
+it when it starts, and iOS hands TCP ports out in order from 49152, not at
+random (`net.inet.tcp.randomize_ports` is 0, as on a Mac). Started first after
+a restart, it gets 49152; started after something else, a later one. On
+2026-11-18 an iPhone on a Wi-Fi advertised its pairing service
+(`_remotepairing._tcp`) on 55021, while users with Developer Mode on and
+LocalDevVPN connected saw siboot 0.19.0 stop with "The iPhone refused the
+connection at 10.7.0.1:49152", and ssboot 0.3.3 did the same.
+
+Since 0.3.4 (siboot 0.19.1), when 49152 refuses, or what answers there isn't
+the pairing service, ssboot knocks on the iPhone's other dynamic ports, 49153
+to 65535 without lockdownd's 62078, 32 at a time through LocalDevVPN, and takes
+the first that answers the pairing handshake
+([`src/preflight.rs`](src/preflight.rs)). The later steps dial that port. A
+closed port refuses at once, so this takes seconds: from a Mac over Wi-Fi, all
+16,382 took 24 s. It stops early, with its own advice, after 64 connections in
+a row that neither refuse nor connect (LocalDevVPN has gone), when more than 48
+ports take the connection (something other than this iPhone answers there, like
+another VPN or a proxy), or when Minis keeps running out of connections.
+
+Minis's shell can't browse Bonjour itself. `minis-bonjour browse` and
+`resolve` might give the advertised port, but whether `resolve` reaches the
+iPhone's own service hasn't been tried, so ssboot doesn't count on it.
 
 ## More than one team
 
@@ -381,7 +409,8 @@ closing. ssboot-pair's own tests, with a fake iPhone, are in
 `cargo test -- --ignored` also reads a real SideStore IPA, named by
 `SSBOOT_SIDESTORE_IPA`, as step 5 does.
 
-`cargo run --example screens -- teams` asks which of two teams signs.
+`cargo run --example screens -- teams` asks which of two teams signs, and
+`-- moved` and `-- nowhere` look for a pairing service that isn't on 49152.
 
 ## What's been tested
 
@@ -431,4 +460,11 @@ closing. ssboot-pair's own tests, with a fake iPhone, are in
   own tests on macOS and Alpine aarch64. Not signed in to Apple with an
   account on two teams yet.
 
-siboot's own history, up to 0.19.0, is in its README on the `main` branch.
+- **0.3.4** merges siboot 0.19.1: when 49152 refuses, or what answers there
+  isn't the pairing service, ssboot looks for the iPhone's pairing service on
+  its other ports, and the later steps dial the one that answers
+  ([above](#the-pairing-port)). Tested as siboot 0.19.1 was, and ssboot's own
+  tests on macOS and Alpine aarch64. Not run in Minis on an iPhone whose
+  service has moved.
+
+siboot's own history, up to 0.19.1, is in its README on the `main` branch.
