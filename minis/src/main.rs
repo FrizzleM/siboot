@@ -70,7 +70,8 @@ const DEVMODE_NAME: &str = "Dev Mode";
 /// LocalDevVPN's address for this iPhone: traffic to it comes back to the
 /// device's own services.
 const DEFAULT_DEVICE_IP: Ipv4Addr = Ipv4Addr::new(10, 7, 0, 1);
-/// The device's RPPairing listener (remoted), as SideInstaller dials it.
+/// The device's RPPairing listener (remoted), as SideInstaller dials it. It's
+/// nearly always there, and step 1 looks for it when it isn't (preflight.rs).
 const DEFAULT_RP_PORT: u16 = 49152;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,6 +86,7 @@ pub enum Command {
     DeveloperMode,
 }
 
+#[derive(Clone)]
 pub struct Args {
     pub command: Command,
     /// With `developer-mode`: turn it on, not only show it.
@@ -239,6 +241,8 @@ Open Minis, with your own Apple Account.
       (default {ip}).
   {port}
       The iPhone's RPPairing port (default {rp}).
+      When nothing answers there, siboot looks
+      on the iPhone's other ports.
   {pairing_file}
       Default ~/.siboot/rp_pairing_file.plist.
   {home}
@@ -483,12 +487,18 @@ async fn pipeline(args: &Args) -> Result<()> {
     } else {
         ui::step(1, "Checking LocalDevVPN, this iPhone and the internet");
     }
-    let online = preflight::run(args).await.map_err(note)?;
-    ui::done(if online { "online, and the iPhone answers" } else { "the iPhone answers" });
+    let checked = preflight::run(args).await.map_err(note)?;
+    ui::done(if checked.online { "online, and the iPhone answers" } else { "the iPhone answers" });
     if args.command == Command::Check {
         ui::finish("Ready", &["Run siboot to install SideInstaller."]);
         return Ok(());
     }
+    // The rest dials where the iPhone answered, which isn't the port asked
+    // for when its pairing service started on another one.
+    let args = &Args {
+        device: checked.device,
+        ..args.clone()
+    };
 
     ui::step(2, "Pairing this iPhone with siboot");
     let pairing_path = args.pairing_path();
