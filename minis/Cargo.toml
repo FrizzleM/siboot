@@ -1,6 +1,6 @@
 [package]
 name = "altboot"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "PC-free bootstrap that pairs and installs AltStore onto the iPhone it runs on, from Open Minis's Linux shell"
 license = "MIT"

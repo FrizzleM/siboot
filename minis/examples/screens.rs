@@ -6,6 +6,8 @@
 //! cargo run --example screens -- rootshell     # taking rootshell's pairing
 //! cargo run --example screens -- stop          # one that stops at Connect
 //! cargo run --example screens -- old-minis     # in an Open Minis before 1.16
+//! cargo run --example screens -- moved         # the pairing service on 55021
+//! cargo run --example screens -- nowhere       # and on no port at all
 //! cargo run --example screens -- developer-mode
 //! cargo run --example screens -- --plain       # the same, as plain lines
 //! cargo run --example screens -- --web         # the same, as the page
@@ -54,15 +56,22 @@ fn main() {
     }
     let devmode = has("developer-mode");
     let stop = has("stop");
+    let port = if has("moved") {
+        Port::Moved
+    } else if has("nowhere") {
+        Port::Nowhere
+    } else {
+        Port::Usual
+    };
     let code = if has("old-minis") {
         old_minis();
         1
-    } else if run(devmode, stop, has("rootshell")) {
+    } else if run(devmode, stop, has("rootshell"), port) {
         0
     } else {
         1
     };
-    if stop && ui::confirm("copy the log to the clipboard?", true) {
+    if (stop || port == Port::Nowhere) && ui::confirm("copy the log to the clipboard?", true) {
         let log = ui::recorded().join("\n");
         let copied = std::process::Command::new("pbcopy")
             .env("LANG", "en_US.UTF-8")
@@ -106,7 +115,55 @@ fn old_minis() {
     );
 }
 
-fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
+/// Where step 1 finds the iPhone's pairing service (preflight.rs).
+#[derive(Clone, Copy, PartialEq)]
+enum Port {
+    /// On 49152, as nearly always.
+    Usual,
+    /// 49152 refuses, and the look through the other ports finds it.
+    Moved,
+    /// Nothing answers as it on any port.
+    Nowhere,
+}
+
+/// Step 1's dial of the pairing service, and the look through the iPhone's
+/// other ports that follows a refusal.
+fn reach(port: Port) -> bool {
+    ui::activity("reaching this iPhone at 10.7.0.1:49152");
+    wait(500);
+    if port == Port::Usual {
+        ui::ok("this iPhone answers on 10.7.0.1:49152 (RPPairing, wire protocol 26)");
+        return true;
+    }
+    ui::detail(
+        "no pairing service at 10.7.0.1:49152: Connection refused (os error 111) \
+         (ConnectionRefused)",
+    );
+    ui::status("looking for this iPhone's pairing service on its other ports");
+    // 55021 is 5869 of the 16382 ports in; nowhere knocks on all of them.
+    let last = if port == Port::Moved { 35 } else { 100 };
+    for percent in 0..=last {
+        ui::percent("ports checked", percent);
+        wait(40);
+    }
+    ui::progress_end();
+    if port == Port::Nowhere {
+        ui::failure(
+            "The iPhone refused the connection at 10.7.0.1:49152, and no other port on it answers \
+             as its pairing service. Turn on Developer Mode (Settings › Privacy & Security › \
+             Developer Mode), and check Wi-Fi is on. If both are on, restart the iPhone, connect \
+             LocalDevVPN again and run altboot again.",
+            "Connection refused (os error 111) (ConnectionRefused); no other port answered as it \
+             (16382 knocked on in 4.1 s; took the connection: 54666)",
+        );
+        return false;
+    }
+    ui::detail("found it on port 55021 after 5869 of 16382 ports, in 1.4 s");
+    ui::ok("this iPhone answers on 10.7.0.1:55021 (RPPairing, wire protocol 26)");
+    true
+}
+
+fn run(devmode: bool, stop: bool, rootshell: bool, port: Port) -> bool {
     let steps = [
         "Check", "Pairing", "Connect", "Apple ID", "Sign", "Install", "Handover",
     ];
@@ -130,15 +187,13 @@ fn run(devmode: bool, stop: bool, rootshell: bool) -> bool {
             600,
             "Apple's sign-in server answers",
         ),
-        (
-            "reaching this iPhone at 10.7.0.1:49152",
-            500,
-            "this iPhone answers on 10.7.0.1:49152",
-        ),
     ] {
         ui::activity(what);
         wait(took);
         ui::ok(answer);
+    }
+    if !reach(port) {
+        return false;
     }
     ui::done("online, and the iPhone answers");
 

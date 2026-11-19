@@ -15,7 +15,7 @@ BASE="${ALTBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/altboot/
 # Of bin/altboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run. SIZE only draws the progress
 # bar.
-SHA256="8d262aa3cbf9b4a4602351fddb32dee665796f1846dc5510eb745e3550dd01a3"
+SHA256="e34d5a3a93a356bcbfa97c75b06996c2ba7f0b8664cbcf82d24b4e1ed70badd4"
 SIZE=12143456
 
 DIR="$HOME/.altboot/bin"

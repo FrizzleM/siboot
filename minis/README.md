@@ -154,8 +154,8 @@ about 45 columns), and the live area kept shorter than the screen, so it redraws
 in place. With `--plain` or `--verbose`, `TERM=dumb`, `ALTBOOT_PLAIN` set, or
 without a terminal on both ends, altboot prints plain lines instead, one per
 event. `cargo run --example screens` plays the screen through a made-up run, on
-a Mac and without an iPhone (`-- stop`, `-- developer-mode` and `-- --plain`
-for the others).
+a Mac and without an iPhone (`-- stop`, `-- developer-mode`, `-- moved`,
+`-- nowhere` and `-- --plain` for the others).
 
 ## The page
 
@@ -226,7 +226,7 @@ the file is.
 
 | # | Step | How |
 |---|---|---|
-| 1 | Check | AltStore's source (apps.altstore.io) and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN |
+| 1 | Check | AltStore's source (apps.altstore.io) and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN, or on the port its pairing service has instead ([below](#the-pairing-port)) |
 | 2 | Pairing | the file saved in `~/.altboot` on an earlier run, while the iPhone accepts it; else siboot's, then ssboot's, while the iPhone accepts it (copied); else the one altboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), when it's offering; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
 | 3 | Connect | pair-verify → `createListener` → TLS-PSK → CDTunnel → software TCP → RSD, as `tunnel_create_rppairing_multihost` does; lockdownd gives the UDID and the iOS version |
 | 4 | Apple ID | rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order; the first time, from siboot's or ssboot's store |
@@ -242,6 +242,34 @@ source's, once it's checked to be AltStore Classic.
 in `~/.altboot`: the pairing file (mode 600), isideload's store (signing key,
 anisette identity, saved token) and the download. The password is never
 written anywhere.
+
+## The pairing port
+
+altboot reaches the iPhone's pairing service (remotepairingd's RPPairing
+listener) at `10.7.0.1:49152` through LocalDevVPN, as SideInstaller and
+StikDebug do. That port isn't fixed. The listener takes whatever port iOS hands
+it when it starts, and iOS hands TCP ports out in order from 49152, not at
+random (`net.inet.tcp.randomize_ports` is 0, as on a Mac). Started first after
+a restart, it gets 49152; started after something else, a later one. On
+2026-11-18 an iPhone on a Wi-Fi advertised its pairing service
+(`_remotepairing._tcp`) on 55021, while users with Developer Mode on and
+LocalDevVPN connected saw siboot 0.19.0 stop with "The iPhone refused the
+connection at 10.7.0.1:49152", and altboot 0.1.1 did the same.
+
+Since 0.1.2 (siboot 0.19.1), when 49152 refuses, or what answers there isn't
+the pairing service, altboot knocks on the iPhone's other dynamic ports, 49153
+to 65535 without lockdownd's 62078, 32 at a time through LocalDevVPN, and takes
+the first that answers the pairing handshake
+([`src/preflight.rs`](src/preflight.rs)). The later steps dial that port. A
+closed port refuses at once, so this takes seconds: from a Mac over Wi-Fi, all
+16,382 took 24 s. It stops early, with its own advice, after 64 connections in
+a row that neither refuse nor connect (LocalDevVPN has gone), when more than 48
+ports take the connection (something other than this iPhone answers there, like
+another VPN or a proxy), or when Minis keeps running out of connections.
+
+Minis's shell can't browse Bonjour itself. `minis-bonjour browse` and
+`resolve` might give the advertised port, but whether `resolve` reaches the
+iPhone's own service hasn't been tried, so altboot doesn't count on it.
 
 ## Pairing in Minis
 
@@ -384,7 +412,8 @@ and rust-core's own tests), altboot's cover:
 twice (the second run keeps the first one's file).
 
 `cargo run --example screens` plays an AltStore install as the page and the
-live screen show it (`-- rootshell` plays rootshell's hand-off instead).
+live screen show it (`-- rootshell` plays rootshell's hand-off instead, and
+`-- moved` and `-- nowhere` look for a pairing service that isn't on 49152).
 
 ## What's been tested
 
@@ -410,6 +439,13 @@ live screen show it (`-- rootshell` plays rootshell's hand-off instead).
   Update Open Minis button that opens the App Store, as siboot 0.18.1 does.
   Before, an older Minis went on to step 2 and stopped there, pointing at
   rootshell, unless a saved pairing still worked. No log is offered after it.
+- **0.1.2** looks for the iPhone's pairing service on its other ports when
+  49152 refuses, or what answers there isn't the pairing service, and the
+  later steps dial the one that answers ([above](#the-pairing-port)), as siboot
+  0.19.1 does; with the service on 49152 nothing changes. Tested on macOS and
+  Alpine aarch64 (the new tests against stand-ins on the loopback, as
+  siboot's), and through `examples/screens.rs -- moved` and `-- nowhere`. Not
+  run in Minis on an iPhone whose service has moved.
 
 Not tested yet: an iPhone at all, an Apple Account at its certificate or App ID
 limit (altboot then asks which certificate to revoke), and a second run after
