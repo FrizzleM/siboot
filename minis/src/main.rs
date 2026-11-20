@@ -18,7 +18,9 @@
 //! The Apple ID password goes only to Apple (as an SRP proof, via isideload) and
 //! is never written to disk or logged. Like SideInstaller, the developer token
 //! and signing key are kept, in ~/.ssboot/isideload, so a second run needn't
-//! sign in again.
+//! sign in again. The Apple Accounts that signed in are kept too, by email, in
+//! ~/.ssboot/apple-accounts (saved.rs): a later run offers them, and asks for
+//! the password only once Apple wants it again.
 //!
 //! In Open Minis the run shows as a page in Minis's browser, served on this
 //! iPhone's loopback, and asks its questions there (web.rs); `--terminal`
@@ -36,6 +38,7 @@ mod keepalive;
 mod pairing;
 mod preflight;
 mod report;
+mod saved;
 mod sign;
 #[allow(dead_code)] // `lasts` is SideInstaller's: ssboot uses `lasts_sidestore`
 mod team;
@@ -234,9 +237,11 @@ Open Minis, with your own Apple Account.
 {options}
   {apple_id}
       Apple Account to sign with (else
-      SSBOOT_APPLE_ID, else it asks). The
-      password comes from SSBOOT_PASSWORD or a
-      prompt that shows only dots.
+      SSBOOT_APPLE_ID, else it offers the
+      saved ones, or asks). The password
+      comes from SSBOOT_PASSWORD or a prompt
+      that shows only dots, and only when
+      Apple wants it.
   {ipa}
       Install this SideStore IPA instead of
       SideStore's nightly.

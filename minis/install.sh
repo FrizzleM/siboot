@@ -14,8 +14,8 @@ BASE="${SSBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/mi
 # Of bin/ssboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run. SIZE only draws the progress
 # bar.
-SHA256="726279774da9b714b4667286f4fe6769373861f3f0652c34101fe01ccb9f49dc"
-SIZE=12274552
+SHA256="5e471dbc65e6be9283f2dd8874311f4771c9bb9ccdaacc71c86713db27205e2f"
+SIZE=12340160
 
 DIR="$HOME/.ssboot/bin"
 BIN="$DIR/ssboot"

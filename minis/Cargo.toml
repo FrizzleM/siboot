@@ -1,6 +1,6 @@
 [package]
 name = "ssboot"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 description = "PC-free bootstrap that pairs and installs SideStore onto the iPhone it runs on, from Open Minis's Linux shell"
 license = "MIT"

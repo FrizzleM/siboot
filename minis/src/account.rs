@@ -15,13 +15,29 @@
 //!
 //! Also here: `Account.sideconf`, the signing certificate as SideStore imports
 //! it, built as rust-core's `account_config` builds it.
+//!
+//! Since 0.3.5 (siboot 0.20.0) ssboot also remembers the Apple Accounts that
+//! signed in (saved.rs) and offers them, and tries the token saved with one
+//! before it asks for the password, which then only comes when Apple wants it
+//! again.
+//! `open` takes the password up front, so that first try is ssboot's own: the
+//! same two tries of the token `open` makes, without the login it falls back
+//! to.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{prelude::BASE64_STANDARD, Engine as _};
 use isideload::anisette::remote_v3::{state::AnisetteState, state_key_for};
-use isideload::auth::apple_account::{TwoFactorCallbackParams, TwoFactorCallbackResponse};
+use isideload::anisette::{
+    remote_v3::RemoteV3AnisetteProvider, AnisetteDataGenerator, AnisetteProvider,
+};
+use isideload::auth::apple_account::{
+    AppToken, AppleAccount, TwoFactorCallbackParams, TwoFactorCallbackResponse,
+};
+use isideload::auth::grandslam::GrandSlam;
 use isideload::dev::certificates::DevelopmentCertificate;
 use isideload::dev::developer_session::DeveloperSession;
 use isideload::dev::device_type::{dev_url, DeveloperDeviceType};
@@ -33,9 +49,13 @@ use isideload::sideload::{SideloaderBuilder, TeamSelection};
 use isideload::util::fs_storage::FsStorage;
 use isideload::util::storage::SideloadingStorage;
 use rootcause::Report;
+use serde::Deserialize;
+use tokio::sync::RwLock;
 
 use crate::apple_session;
+use crate::error_text::report_text;
 use crate::fail::{Fail, Result};
+use crate::saved;
 use crate::team::{self, Kind};
 use crate::{ui, Args};
 
@@ -76,19 +96,27 @@ pub struct Session {
 }
 
 pub async fn sign_in(args: &Args) -> Result<Session> {
+    let storage = args.home.join("isideload");
+    // Before the folder exists: siboot's store is only taken into none.
+    if let Some(siboot) = crate::siboot_home() {
+        start_from_siboot(&siboot, &args.home);
+    }
+    std::fs::create_dir_all(&storage).map_err(|e| {
+        Fail::new(
+            format!("Couldn't create {}.", storage.display()),
+            e.to_string(),
+        )
+    })?;
+    // Before this sign-in saves a token, so an account new here is said to
+    // be kept.
+    start_list(&args.home, &storage);
     let apple_id = match args
         .apple_id
         .clone()
         .or_else(|| std::env::var("SSBOOT_APPLE_ID").ok())
     {
         Some(id) => id,
-        None => ui::ask_text(
-            "sign in to your Apple Account",
-            "Email",
-            "your Apple Account",
-            "Apple Account email: ",
-        )
-        .unwrap_or_default(),
+        None => which_account(&args.home, &storage).unwrap_or_default(),
     };
     // Apple Account names aren't case-sensitive, but GrandSlam's SRP proof
     // hashes the name exactly as sent, so one typed with a capital (a phone
@@ -99,39 +127,32 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
     if apple_id.is_empty() {
         return Err(Fail::by_user("No Apple Account given."));
     }
-    let password = match std::env::var("SSBOOT_PASSWORD") {
-        Ok(p) if !p.is_empty() => p,
-        _ => ui::ask_secret(
-            "sign in to your Apple Account",
-            "Password",
-            "it goes only to Apple",
-            "Password (not shown; it goes only to Apple): ",
-        )
-        .map_err(|e| {
-            Fail::new(
-                "Couldn't read the password from the terminal.",
-                e.to_string(),
-            )
-        })?
-        .unwrap_or_default(),
-    };
-    if password.is_empty() {
-        return Err(Fail::by_user("No password given."));
-    }
-
-    let storage = args.home.join("isideload");
-    if let Some(siboot) = crate::siboot_home() {
-        start_from_siboot(&siboot, &args.home);
-    }
-    std::fs::create_dir_all(&storage).map_err(|e| {
-        Fail::new(
-            format!("Couldn't create {}.", storage.display()),
-            e.to_string(),
-        )
-    })?;
     adopt_folder_typed_as(&storage, &typed, &apple_id);
 
     let servers = candidates(args.anisette.as_deref(), last_server(&args.home).as_deref());
+    let password = match std::env::var("SSBOOT_PASSWORD") {
+        Ok(p) if !p.is_empty() => p,
+        _ => {
+            // A sign-in saved with the account first: while Apple takes it,
+            // there's no password to ask for.
+            match saved_token(&storage, &apple_id, unix_now()) {
+                Saved::Usable(token) => match with_token(&token, &servers, &storage).await? {
+                    ByToken::Opened(server, developer, teams) => {
+                        let how = Signed::WithoutPassword;
+                        return signed_in(
+                            args, &storage, &apple_id, &server, developer, teams, how,
+                        )
+                        .await;
+                    }
+                    ByToken::Refused => ui::note(saved::RUN_OUT),
+                },
+                Saved::RunOut => ui::note(saved::RUN_OUT),
+                Saved::None => {}
+            }
+            ask_password()?
+        }
+    };
+
     let mut last_error = String::new();
     for server in &servers {
         ui::status(&format!("signing in through {}", host_of(server)));
@@ -140,36 +161,13 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
         )
         .await
         {
-            Ok((mut developer, teams)) => {
-                remember_server(&args.home, server);
-                let (picked, kind, first) = pick_team(&mut developer, teams).await?;
-                let team = team::summary(picked.name.as_deref(), &picked.team_id, kind);
-                let mut sideloader = SideloaderBuilder::new(developer, apple_id.clone())
-                    .team_selection(TeamSelection::First)
-                    .max_certs_behavior(MaxCertsBehavior::Prompt(Box::new(
-                        choose_certificates_to_revoke,
-                    )))
-                    .storage(Box::new(FsStorage::new(storage.clone())))
-                    .machine_name(MACHINE_NAME.to_string())
-                    .build();
-                // `open` has just listed the teams, so the one picked is
-                // handed over rather than listed again.
-                sideloader.set_team(picked);
-                ui::ok(&format!("signed in — {team}"));
-                return Ok(Session {
-                    sideloader,
-                    team,
-                    storage,
-                    anisette_url: server.clone(),
-                    kind,
-                    first,
-                });
+            Ok((developer, teams)) => {
+                let how = Signed::WithPassword;
+                return signed_in(args, &storage, &apple_id, server, developer, teams, how).await;
             }
             Err(e) => {
                 if let Some(advice) = stops_sign_in(&e) {
-                    let mut f = Fail::new(advice, e);
-                    f.by_user = advice == CANCELLED;
-                    return Err(f);
+                    return Err(stopped(advice, e));
                 }
                 ui::warn(&format!(
                     "{} didn't work: {}",
@@ -180,13 +178,439 @@ pub async fn sign_in(args: &Args) -> Result<Session> {
             }
         }
     }
-    Err(Fail::new(
-        format!(
-            "Couldn't sign in through any of {} anisette servers. Try again later.",
-            servers.len()
-        ),
+    Err(no_server(servers.len(), last_error))
+}
+
+/// How the developer session came, for the line that says it's open.
+#[derive(Clone, Copy)]
+enum Signed {
+    WithPassword,
+    /// The token saved with the account, so nothing was asked.
+    WithoutPassword,
+}
+
+/// What's left once Apple has opened a developer session: remembering the
+/// server and the Apple Account, the team, and the sideloader that signs.
+async fn signed_in(
+    args: &Args,
+    storage: &Path,
+    apple_id: &str,
+    server: &str,
+    mut developer: DeveloperSession,
+    teams: Vec<DeveloperTeam>,
+    how: Signed,
+) -> Result<Session> {
+    remember_server(&args.home, server);
+    // Before the team, so a sign-in that went through is kept even if no
+    // team is picked.
+    let new = remember_account(&args.home, apple_id);
+    let (picked, kind, first) = pick_team(&mut developer, teams).await?;
+    let team = team::summary(picked.name.as_deref(), &picked.team_id, kind);
+    let mut sideloader = SideloaderBuilder::new(developer, apple_id.to_string())
+        .team_selection(TeamSelection::First)
+        .max_certs_behavior(MaxCertsBehavior::Prompt(Box::new(
+            choose_certificates_to_revoke,
+        )))
+        .storage(Box::new(FsStorage::new(storage.to_path_buf())))
+        .machine_name(MACHINE_NAME.to_string())
+        .build();
+    // `open` has just listed the teams, so the one picked is handed over
+    // rather than listed again.
+    sideloader.set_team(picked);
+    ui::ok(&match how {
+        Signed::WithPassword => format!("signed in — {team}"),
+        Signed::WithoutPassword => format!("signed in without the password — {team}"),
+    });
+    if new {
+        ui::note(saved::SAVED);
+    }
+    Ok(Session {
+        sideloader,
+        team,
+        storage: storage.to_path_buf(),
+        anisette_url: server.to_string(),
+        kind,
+        first,
+    })
+}
+
+fn stopped(advice: &'static str, error: String) -> Fail {
+    let mut f = Fail::new(advice, error);
+    f.by_user = advice == CANCELLED;
+    f
+}
+
+fn no_server(servers: usize, last_error: String) -> Fail {
+    Fail::new(
+        format!("Couldn't sign in through any of {servers} anisette servers. Try again later."),
         last_error,
-    ))
+    )
+}
+
+fn ask_email() -> Option<String> {
+    ui::ask_text(
+        "sign in to your Apple Account",
+        "Email",
+        "your Apple Account",
+        "Apple Account email: ",
+    )
+}
+
+fn ask_password() -> Result<String> {
+    let password = ui::ask_secret(
+        "sign in to your Apple Account",
+        "Password",
+        "it goes only to Apple",
+        "Password (not shown; it goes only to Apple): ",
+    )
+    .map_err(|e| {
+        Fail::new(
+            "Couldn't read the password from the terminal.",
+            e.to_string(),
+        )
+    })?
+    .unwrap_or_default();
+    if password.is_empty() {
+        return Err(Fail::by_user("No password given."));
+    }
+    Ok(password)
+}
+
+// ------------------------------------------------- remembered Apple Accounts
+
+/// The Apple Account to sign in with when none was given: one of those saved,
+/// picked from a menu that can also forget one, or typed. None when the user
+/// stops.
+fn which_account(home: &Path, storage: &Path) -> Option<String> {
+    loop {
+        let accounts = saved::list(home);
+        if accounts.is_empty() {
+            return ask_email();
+        }
+        let index = ui::choose(saved::QUESTION, &saved::options(&accounts))?;
+        match saved::picked(index, accounts.len()) {
+            saved::Pick::Account(i) => return accounts.get(i).cloned(),
+            saved::Pick::Another => {
+                if let Some(email) = ask_email() {
+                    return Some(email);
+                }
+                // Back from the field: to the menu.
+            }
+            saved::Pick::Forget => forget_one(home, storage, &accounts),
+        }
+    }
+}
+
+/// The first time, the Apple Accounts with a sign-in saved here already
+/// (ssboot 0.3.4 and older, or siboot before 0.20.0, whose store ssboot may start from, kept the token but no list) start the list.
+fn start_list(home: &Path, storage: &Path) {
+    if saved::exists(home) {
+        return;
+    }
+    if let Err(e) = saved::start(home, &signed_in_before(storage)) {
+        ui::detail(&format!("couldn't save the list of Apple Accounts: {e}"));
+    }
+}
+
+/// Apple Accounts with a sign-in saved in isideload's store, the latest
+/// first. Only a sign-in in its own account's folder counts, so the email it
+/// names is that account's.
+fn signed_in_before(storage: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(storage) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(u64, String)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let token = SavedToken::read(&entry.path().join(SESSION_FILE))?;
+            (apple_session::account_dir(storage, &token.apple_id) == entry.path())
+                .then_some((token.saved_at, token.apple_id))
+        })
+        .collect();
+    found.sort_by_key(|(saved_at, _)| std::cmp::Reverse(*saved_at));
+    found.into_iter().map(|(_, apple_id)| apple_id).collect()
+}
+
+/// Puts the Apple Account first on the list. True when it wasn't on it, so
+/// the user hears it's kept.
+fn remember_account(home: &Path, apple_id: &str) -> bool {
+    match saved::remember(home, apple_id) {
+        Ok(new) => new,
+        Err(e) => {
+            ui::detail(&format!(
+                "couldn't save the Apple Account for next time: {e}"
+            ));
+            false
+        }
+    }
+}
+
+/// Forgets one of `accounts`, and the sign-in saved with it, once the user has
+/// said which and confirmed. Its signing key stays, as SideInstaller keeps one
+/// for an Apple ID it removes: signing in again then needs no new certificate.
+fn forget_one(home: &Path, storage: &Path, accounts: &[String]) {
+    let index = match accounts {
+        [_] => Some(0),
+        _ => ui::choose(saved::FORGET_WHICH, accounts),
+    };
+    let Some(email) = index.and_then(|i| accounts.get(i)) else {
+        return;
+    };
+    if !ui::confirm(&format!("forget {email}?"), false) {
+        return;
+    }
+    match saved::forget(home, email) {
+        Ok(_) => {
+            if apple_session::forget(storage, email) {
+                ui::ok(&format!("forgot {email} and its saved sign-in"));
+            } else {
+                ui::ok(&format!("forgot {email}"));
+            }
+        }
+        Err(e) => ui::warn(&format!("couldn't forget {email}: {e}")),
+    }
+}
+
+// ------------------------------------------------------ the saved sign-in
+
+/// apple_session.rs keeps an account's developer token in this file, in the
+/// account's folder beside its signing key.
+const SESSION_FILE: &str = "developer_session.json";
+
+/// Signs in again this long before Apple's stated expiry, as apple_session.rs
+/// does, rather than race it.
+const EXPIRY_MARGIN_SECS: u64 = 10 * 60;
+
+/// The developer token apple_session.rs saved after a sign-in, as it writes it
+/// (its `SavedSession`). No `Debug`, so the token can't reach a log line.
+#[derive(Deserialize)]
+struct SavedToken {
+    apple_id: String,
+    adsid: String,
+    token: String,
+    /// Both as Apple sent them.
+    duration: u64,
+    expiry: u64,
+    /// Unix seconds.
+    saved_at: u64,
+}
+
+impl SavedToken {
+    fn read(path: &Path) -> Option<SavedToken> {
+        serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    }
+
+    /// When the token expires, as apple_session.rs reads it: Apple's stated
+    /// expiry, else its duration from when it was saved. None when Apple
+    /// gave neither: then it's tried anyway.
+    fn expires_at(&self) -> Option<u64> {
+        apple_session::stated_expiry(self.expiry)
+            .or_else(|| (self.duration > 0).then(|| self.saved_at.saturating_add(self.duration)))
+    }
+
+    fn app_token(&self) -> AppToken {
+        AppToken {
+            token: self.token.clone(),
+            duration: self.duration,
+            expiry: self.expiry,
+        }
+    }
+
+    /// For the details: how long Apple said it lasts from `now`.
+    fn lifetime(&self, now: u64) -> String {
+        match self.expires_at() {
+            Some(at) if at > now => {
+                let left = at - now;
+                format!(
+                    "Apple's sign-in lasts {}d {}h more",
+                    left / 86_400,
+                    left % 86_400 / 3_600
+                )
+            }
+            Some(_) => "Apple's sign-in is past its expiry".into(),
+            None => "Apple gave the sign-in no expiry".into(),
+        }
+    }
+}
+
+enum Saved {
+    /// A token that hasn't expired: worth trying before the password.
+    Usable(SavedToken),
+    /// One that has: Apple needs the password again.
+    RunOut,
+    /// None, or one that can't be read or names another account.
+    None,
+}
+
+fn saved_token(storage: &Path, apple_id: &str, now: u64) -> Saved {
+    let path = apple_session::account_dir(storage, apple_id).join(SESSION_FILE);
+    match SavedToken::read(&path) {
+        Some(token) if token.apple_id != apple_id => Saved::None,
+        Some(token)
+            if token
+                .expires_at()
+                .is_some_and(|at| now.saturating_add(EXPIRY_MARGIN_SECS) >= at) =>
+        {
+            Saved::RunOut
+        }
+        Some(token) => Saved::Usable(token),
+        None => Saved::None,
+    }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// What the saved token came to.
+enum ByToken {
+    /// Apple opened a developer session with it, through this server.
+    Opened(String, DeveloperSession, Vec<DeveloperTeam>),
+    /// Apple turned it down: only the password signs in now.
+    Refused,
+}
+
+/// Signs in with the saved token through each server in turn, as the
+/// password would, never logging in. Stops as `sign_in` does when no server
+/// gets it to Apple, or Apple is limiting sign-ins: the password wouldn't
+/// help either, as `open` doesn't log in for those.
+async fn with_token(token: &SavedToken, servers: &[String], storage: &Path) -> Result<ByToken> {
+    let mut last_error = String::new();
+    for server in servers {
+        ui::status(&format!("signing in through {}", host_of(server)));
+        match open_with_token(token, server, storage).await {
+            Ok((developer, teams)) => {
+                let lifetime = token.lifetime(unix_now());
+                tracing::info!(
+                    "Apple ID: signed in with the saved token, so no password ({lifetime})"
+                );
+                ui::detail(&format!("used the saved sign-in: {lifetime}"));
+                return Ok(ByToken::Opened(server.clone(), developer, teams));
+            }
+            Err(Tried::Answered(e)) if refuses_token(&e) => {
+                tracing::info!(
+                    "Apple ID: Apple no longer takes the saved token ({}); asking for the password",
+                    first_line(&e)
+                );
+                return Ok(ByToken::Refused);
+            }
+            Err(Tried::Answered(e) | Tried::NotReached(e)) => {
+                if let Some(advice) = stops_sign_in(&e) {
+                    return Err(stopped(advice, e));
+                }
+                ui::warn(&format!(
+                    "{} didn't work: {}",
+                    host_of(server),
+                    first_line(&e)
+                ));
+                last_error = e;
+            }
+        }
+    }
+    Err(no_server(servers.len(), last_error))
+}
+
+/// Why the token didn't open a session through a server.
+enum Tried {
+    /// The anisette server, the network or the client failed before Apple
+    /// had it.
+    NotReached(String),
+    /// What Apple's developer portal answered.
+    Answered(String),
+}
+
+/// The saved token through `server`, tried as `apple_session::open` tries it
+/// before it logs in: on a GrandSlam client without the URL bag first, since
+/// the developer portal doesn't need it, then on one with it, which can also
+/// provision the anisette identity.
+async fn open_with_token(
+    token: &SavedToken,
+    server: &str,
+    storage: &Path,
+) -> std::result::Result<(DeveloperSession, Vec<DeveloperTeam>), Tried> {
+    let anisette = || {
+        RemoteV3AnisetteProvider::new(
+            server,
+            Box::new(FsStorage::new(storage.to_path_buf())),
+            "0".to_string(),
+        )
+        .map_err(|e| Tried::NotReached(format!("anisette provider: {}", report_text(&e))))
+    };
+
+    let without_url_bag = async {
+        let provider = anisette()?;
+        let client_info = provider
+            .get_client_info()
+            .await
+            .map_err(|e| Tried::NotReached(format!("anisette client info: {}", report_text(&e))))?;
+        let client = GrandSlam::without_url_bag(client_info, false)
+            .map_err(|e| Tried::NotReached(format!("GrandSlam client: {}", report_text(&e))))?;
+        let mut developer = DeveloperSession::new(
+            token.app_token(),
+            token.adsid.clone(),
+            Arc::new(client),
+            AnisetteDataGenerator::new(Arc::new(RwLock::new(provider))),
+        );
+        let teams = developer
+            .list_teams()
+            .await
+            .map_err(|e| Tried::Answered(report_text(&e)))?;
+        Ok::<_, Tried>((developer, teams))
+    };
+    match without_url_bag.await {
+        Ok(opened) => return Ok(opened),
+        Err(Tried::NotReached(e) | Tried::Answered(e)) => tracing::info!(
+            "Apple ID: couldn't use the saved token straight away ({}); trying it with a full sign-in client",
+            first_line(&e)
+        ),
+    }
+
+    // Only fetches the anisette server's client info and the URL bag; no
+    // sign-in.
+    let account = AppleAccount::builder(&token.apple_id)
+        .anisette_provider(anisette()?)
+        .build()
+        .await
+        .map_err(|e| {
+            Tried::NotReached(format!(
+                "anisette client info or URL bag: {}",
+                report_text(&e)
+            ))
+        })?;
+    let mut developer = DeveloperSession::new(
+        token.app_token(),
+        token.adsid.clone(),
+        account.grandslam_client.clone(),
+        account.anisette_generator.clone(),
+    );
+    let teams = developer
+        .list_teams()
+        .await
+        .map_err(|e| Tried::Answered(format!("developer session: {}", report_text(&e))))?;
+    Ok((developer, teams))
+}
+
+/// Whether Apple's answer turned the token down, so only the password signs
+/// in now. Not when the anisette server or the network failed on the way,
+/// Apple was busy, or it refused the Apple Account itself (1102, 2160):
+/// `open` doesn't log in again for those either (its `is_transient` and
+/// `is_account_refusal`).
+fn refuses_token(error: &str) -> bool {
+    let e = error.to_lowercase();
+    let transient = [
+        "anisette",
+        "error sending request",
+        "timed out",
+        "(429 ",
+        "server error (5",
+    ]
+    .iter()
+    .any(|s| e.contains(s));
+    let account = e.contains("developer error 1102") || e.contains("developer error 2160");
+    !transient && !account
 }
 
 /// The team that signs: the only one Apple lists, or the one picked when it
@@ -841,6 +1265,138 @@ mod tests {
         assert!(old.exists());
 
         std::fs::remove_dir_all(&storage).unwrap();
+    }
+
+    const NOW: u64 = 1_789_300_000;
+
+    fn store(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("ssboot-token-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// A token as apple_session.rs's `SavedSession` serializes, in the
+    /// account's folder.
+    fn save_token(storage: &Path, apple_id: &str, expiry: u64, duration: u64, saved_at: u64) {
+        let dir = apple_session::account_dir(storage, apple_id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let json = format!(
+            r#"{{"apple_id":"{apple_id}","adsid":"001234-05-abcdef","token":"AAAABLwIAAAAAGW","duration":{duration},"expiry":{expiry},"saved_at":{saved_at}}}"#
+        );
+        std::fs::write(dir.join(SESSION_FILE), json).unwrap();
+    }
+
+    #[test]
+    fn a_saved_token_is_tried_until_it_runs_out() {
+        let storage = store("expiry");
+        let id = "someone@example.com";
+        assert!(matches!(saved_token(&storage, id, NOW), Saved::None));
+
+        // Apple's expiry in milliseconds, a day off.
+        save_token(&storage, id, (NOW + 86_400) * 1000, 0, NOW - 100);
+        let Saved::Usable(token) = saved_token(&storage, id, NOW) else {
+            panic!("a day left is usable");
+        };
+        assert_eq!(token.adsid, "001234-05-abcdef");
+        assert_eq!(token.app_token().token, "AAAABLwIAAAAAGW");
+        assert_eq!(token.lifetime(NOW), "Apple's sign-in lasts 1d 0h more");
+
+        // Within ten minutes of the expiry, or past it: the password.
+        save_token(&storage, id, NOW + 300, 0, NOW - 100);
+        assert!(matches!(saved_token(&storage, id, NOW), Saved::RunOut));
+        save_token(&storage, id, 0, 3_600, NOW - 7_200);
+        assert!(matches!(saved_token(&storage, id, NOW), Saved::RunOut));
+
+        // No expiry and no duration: tried anyway, as apple_session.rs does.
+        save_token(&storage, id, 0, 0, NOW - 100);
+        assert!(matches!(saved_token(&storage, id, NOW), Saved::Usable(_)));
+
+        // One naming another account, or one that can't be read: none.
+        save_token(&storage, id, 0, 0, NOW);
+        let dir = apple_session::account_dir(&storage, id);
+        let other = std::fs::read_to_string(dir.join(SESSION_FILE))
+            .unwrap()
+            .replace(id, "someone.else@example.com");
+        std::fs::write(dir.join(SESSION_FILE), other).unwrap();
+        assert!(matches!(saved_token(&storage, id, NOW), Saved::None));
+        std::fs::write(dir.join(SESSION_FILE), "{not json").unwrap();
+        assert!(matches!(saved_token(&storage, id, NOW), Saved::None));
+
+        std::fs::remove_dir_all(&storage).unwrap();
+    }
+
+    /// siboot reads the token where apple_session.rs keeps it: its own
+    /// `forget` takes away the file siboot reads.
+    #[test]
+    fn the_token_is_read_where_apple_session_keeps_it() {
+        let storage = store("path");
+        let id = "someone@example.com";
+        save_token(&storage, id, 0, 0, NOW);
+        assert!(matches!(saved_token(&storage, id, NOW), Saved::Usable(_)));
+        assert!(apple_session::forget(&storage, id));
+        assert!(matches!(saved_token(&storage, id, NOW), Saved::None));
+        std::fs::remove_dir_all(&storage).unwrap();
+    }
+
+    #[test]
+    fn accounts_that_signed_in_before_start_the_list_latest_first() {
+        let storage = store("before");
+        let home = storage.join("home");
+        save_token(&storage, "old@example.com", 0, 0, NOW - 1_000);
+        save_token(&storage, "new@example.com", 0, 0, NOW);
+        // A token in a folder that isn't its account's is left out.
+        save_token(&storage, "moved@example.com", 0, 0, NOW + 1);
+        std::fs::rename(
+            apple_session::account_dir(&storage, "moved@example.com"),
+            storage.join("elsewhere"),
+        )
+        .unwrap();
+        // So is a folder with no token, like the anisette identity's.
+        std::fs::create_dir_all(storage.join("anisette")).unwrap();
+
+        assert_eq!(
+            signed_in_before(&storage),
+            ["new@example.com", "old@example.com"]
+        );
+        start_list(&home, &storage);
+        assert_eq!(saved::list(&home), ["new@example.com", "old@example.com"]);
+
+        // Only the first time: one forgotten since doesn't come back.
+        saved::forget(&home, "old@example.com").unwrap();
+        start_list(&home, &storage);
+        assert_eq!(saved::list(&home), ["new@example.com"]);
+
+        std::fs::remove_dir_all(&storage).unwrap();
+    }
+
+    #[test]
+    fn a_new_account_is_said_to_be_kept_once() {
+        let home = store("remember");
+        assert!(remember_account(&home, "someone@example.com"));
+        assert!(!remember_account(&home, "someone@example.com"));
+        assert_eq!(saved::list(&home), ["someone@example.com"]);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn only_apples_refusal_of_the_token_asks_for_the_password() {
+        for refused in [
+            " ● Developer error 1100: Your session has expired. Please log in.",
+            " ● Developer request failed\n ● HTTP status client error (401 Unauthorized) for url (https://developerservices2.apple.com/)",
+            "developer session:  ● Failed to extract developer request result",
+        ] {
+            assert!(refuses_token(refused), "{refused}");
+        }
+        for not_refused in [
+            " ● Failed to get anisette headers\n ● HTTP status server error (522 <unknown status code>)",
+            " ● error sending request for url (https://developerservices2.apple.com/services/QH65B2/listTeams.action)",
+            " ● HTTP status client error (429 Too Many Requests) for url (https://developerservices2.apple.com/)",
+            " ● Developer request failed\n ● HTTP status server error (503 Service Unavailable)",
+            " ● Failed to list developer teams\n ● Developer error 2160: Please verify the email address associated with your Apple Account.",
+            " ● Developer error 1102: (Apple's age refusal)",
+        ] {
+            assert!(!refuses_token(not_refused), "{not_refused}");
+        }
     }
 
     /// The certificate prompt blocks in place, and isideload calls it from the
