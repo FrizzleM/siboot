@@ -16,7 +16,9 @@
 //! The Apple ID password goes only to Apple (as an SRP proof, via isideload) and
 //! is never written to disk or logged. Like SideInstaller, the developer token
 //! and signing key are kept, in ~/.siboot/isideload, so a second run needn't
-//! sign in again.
+//! sign in again. The Apple Accounts that signed in are kept too, by email, in
+//! ~/.siboot/apple-accounts (saved.rs): a later run offers them, and asks for
+//! the password only once Apple wants it again.
 //!
 //! In Open Minis the run shows as a page in Minis's browser, served on this
 //! iPhone's loopback, and asks its questions there (web.rs); `--terminal`
@@ -33,6 +35,7 @@ mod keepalive;
 mod pairing;
 mod preflight;
 mod report;
+mod saved;
 mod seed;
 mod sign;
 mod team;
@@ -225,9 +228,11 @@ Open Minis, with your own Apple Account.
 {options}
   {apple_id}
       Apple Account to sign with (else
-      SIBOOT_APPLE_ID, else it asks). The
-      password comes from SIBOOT_PASSWORD or a
-      prompt that shows only dots.
+      SIBOOT_APPLE_ID, else it offers the
+      saved ones, or asks). The password
+      comes from SIBOOT_PASSWORD or a prompt
+      that shows only dots, and only when
+      Apple wants it.
   {ipa}
       Install this IPA instead of SideInstaller's
       latest release.

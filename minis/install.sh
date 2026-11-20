@@ -14,8 +14,8 @@ BASE="${SIBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/main/mini
 # Of bin/siboot-aarch64, updated with it: a download that doesn't match (an
 # error page, a cut-off transfer) is never run. SIZE only draws the progress
 # bar.
-SHA256="091d4208a3afa403b78334d08a6a4690d3336b9c92975000a8f370f08e074ed1"
-SIZE=12143448
+SHA256="b33f14a00b94ae8a8f133f43bcd0300b7080cc816996d489a695d0731ab531c9"
+SIZE=12209056
 
 DIR="$HOME/.siboot/bin"
 BIN="$DIR/siboot"

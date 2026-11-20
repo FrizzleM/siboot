@@ -26,7 +26,9 @@ Settings. Go back to Minis once Settings says it's paired. After that siboot
 uses the pairing file it saved and doesn't ask. Then your Apple Account email,
 password and verification code, and, if the account is on more than one
 developer team (a paid membership and the free team every account has, say),
-which team signs ([below](#more-than-one-team)). Keep Minis open until siboot
+which team signs ([below](#more-than-one-team)). The next time, siboot offers
+the Apple Accounts that signed in before, and asks for no password or code
+while Apple's sign-in lasts ([below](#saved-apple-accounts)). Keep Minis open until siboot
 says it's done: iOS pauses it in the background. The first time, trust your
 Apple Account in Settings › General › VPN & Device Management. Free accounts'
 apps last 7 days; SideInstaller can renew itself from then on. A paid team's
@@ -151,7 +153,7 @@ file is.
 | 1 | Check | GitHub and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN, or on the port its pairing service has instead ([below](#the-pairing-port)) |
 | 2 | Pairing | the file saved in `~/.siboot` on an earlier run, while the iPhone accepts it; else the one siboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), when it's offering; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
 | 3 | Connect | pair-verify → `createListener` → TLS-PSK → CDTunnel → software TCP → RSD, as `tunnel_create_rppairing_multihost` does; lockdownd gives the UDID |
-| 4 | Apple ID | rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order; then the team, picked when Apple lists more than one ([below](#more-than-one-team)) |
+| 4 | Apple ID | the Apple Account picked from those saved, or typed, and its saved token before any password ([below](#saved-apple-accounts)); then rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order; then the team, picked when Apple lists more than one ([below](#more-than-one-team)) |
 | 5 | Sign | the latest `SideInstaller.ipa` release, signed with isideload's `sign_app` (device registered, app group, no Increased Memory Limit), as Side by Side does |
 | 6 | Install | AFC upload to `/PublicStaging`, every file checked, `installation_proxy` with `PackageType: Developer` |
 | 7 | Hand over | house_arrest writes the pairing file to `Library/Application Support/rp_pairing_file.plist` and marks it imported (`importedPairingFileName`), as Side by Side hands one to SideInstaller |
@@ -161,8 +163,9 @@ file is.
 ([below](#developer-mode)).
 `SIBOOT_APPLE_ID` and `SIBOOT_PASSWORD` skip the prompts. Everything is kept in
 `~/.siboot`: the pairing file (mode 600), isideload's store (signing key,
-anisette identity, saved token) and the download. The password is never
-written anywhere.
+anisette identity, saved token), the saved Apple Accounts' emails
+(`apple-accounts`, mode 600) and the download. The password is never written
+anywhere.
 
 ## The pairing port
 
@@ -216,6 +219,43 @@ free team signs lasts 7 days, what a paid team signs, a year.
 - The team's ID ends SideInstaller's bundle ID, so picking another team than
   last time installs a second copy beside the first.
 - Back, Esc or an empty answer stops the run, and no log is offered.
+
+## Saved Apple Accounts
+
+Since 0.20.0 siboot remembers the Apple Accounts that sign in with it, so a
+later run needn't ask for them ([`src/saved.rs`](src/saved.rs)):
+
+- After a sign-in, the account's email goes first in `~/.siboot/apple-accounts`
+  (one a line, mode 600, seven at most), and the first time, step 4 says so.
+  The first run of 0.20.0 starts that list with the accounts that signed in
+  with an earlier siboot, from the tokens they left (below), the latest first.
+- The next run asks **Sign in with which Apple Account?**: each saved one, the
+  last used first, then **Another Apple Account**, the email field as before
+  (Cancel comes back to the menu), and **Forget an Apple Account**, which asks
+  which one, then yes or no. Forgetting one takes its email off the list and
+  deletes its saved token, but keeps its signing key, as SideInstaller does
+  when it removes an Apple ID: signing in with it again makes no new
+  certificate. Back, Esc or an empty answer at the menu stops the run.
+- The password isn't saved: Minis's shell has no keychain to keep it in. What
+  spares it is the developer token `apple_session.rs` saves after a sign-in, as
+  SideInstaller does. `open` takes the password before it tries the token, so
+  siboot tries the token first itself ([`src/account.rs`](src/account.rs)), the
+  way `open` does but never logging in: on a GrandSlam client without the URL
+  bag, then on one with it, through each anisette server in turn. When Apple
+  takes it, step 4 says "signed in without the password", with no
+  verification code either.
+- When the token has expired (Apple's expiry, ten minutes early, as
+  `apple_session.rs` reads it), or Apple turns it down, step 4 says the saved
+  sign-in has run out and asks for the password, and the sign-in goes on as
+  before. When no server gets the token to Apple, or Apple is limiting
+  sign-ins, siboot stops as it would have with the password: `open` doesn't
+  log in for those either.
+- `--apple-id` or `SIBOOT_APPLE_ID` skips the menu, and the token is still
+  tried first. `SIBOOT_PASSWORD` skips that try; `open` then tries the token
+  itself.
+
+How long Apple's token lasts hasn't been measured here: Apple states it in the
+token, and Show details (or `--verbose`) says how long it has left.
 
 ## Pairing in Minis
 
@@ -346,7 +386,12 @@ typed), argument
 parsing, `developer-mode` against stand-ins for lockdownd and AMFI (on already,
 off, unreadable, a declined restart, the passcode refusal, a hang-up), the bundle walk, 2FA answers, server order, the sign-in errors that
 stop it, which teams in a listTeams answer are free or paid and how the
-question lists them, install refusals, and rust-core's own `apple_session.rs` and
+question lists them, the saved Apple Accounts (the order, at most seven,
+forgetting one, a hand-edited file, mode 600, the menu's choices), the saved
+token (read where `apple_session.rs` keeps it, until ten minutes before its
+expiry, one naming another account or unreadable, which of Apple's answers
+turn it down) and the accounts that signed in before 0.20.0 starting the list,
+install refusals, and rust-core's own `apple_session.rs` and
 `error_text.rs` tests. A test also stands in for a rootshell that iOS has
 paused: the connection goes through and nothing answers. The page's server is
 tested over real loopback connections: paths without the key, another Host,
@@ -359,8 +404,9 @@ closing. siboot-pair's own tests, with the same fake iPhone, are in
 
 `cargo run --example screens` plays pairing in Minis as the page and the live
 screen show it (`-- rootshell` plays rootshell's hand-off instead,
-`-- teams` asks which of two teams signs, and `-- moved` and `-- nowhere`
-look for a pairing service that isn't on 49152).
+`-- teams` asks which of two teams signs, `-- saved` offers two saved Apple
+Accounts, `-- saved run-out` one whose saved sign-in has run out, and
+`-- moved` and `-- nowhere` look for a pairing service that isn't on 49152).
 
 ## What's been tested
 
@@ -465,7 +511,21 @@ look for a pairing service that isn't on 49152).
   through `examples/screens.rs -- moved` and `-- nowhere`, as the page at an
   iPhone's size and as plain lines. Not run in Minis on an iPhone whose
   service has moved, so how fast it goes through LocalDevVPN isn't known yet.
+- **0.20.0** remembers the Apple Accounts that sign in, offers them the next
+  time, and signs in with the token saved with one before asking for the
+  password ([above](#saved-apple-accounts)). Until now siboot asked for the
+  password every time, and `open` didn't use it while the token worked.
+  Tested on macOS and Alpine aarch64 (121 tests, the new ones on the list's
+  file, the saved token as `apple_session.rs` writes it, and which of Apple's
+  answers turn it down), and through `examples/screens.rs -- saved` as the
+  page at an iPhone's size (an account picked and signed in without the
+  password, one forgotten, Another Apple Account cancelled back to the menu,
+  and a new one typed, with the line saying it's kept), on a 45-column live
+  screen and as plain lines (`-- saved run-out` too); the static build ran
+  `--version` in Alpine. Not signed in to Apple with a saved token yet, so
+  siboot's own try of it hasn't met Apple's answers here.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account on more than
 one team, one at its certificate or App ID limit (siboot then asks which
-certificate to revoke), and a second run after the 7-day profile expires.
+certificate to revoke), a second run after the 7-day profile expires, and
+signing in with a saved account's token, without the password.
