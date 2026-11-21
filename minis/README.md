@@ -524,6 +524,18 @@ Accounts, `-- saved run-out` one whose saved sign-in has run out, and
   screen and as plain lines (`-- saved run-out` too); the static build ran
   `--version` in Alpine. Not signed in to Apple with a saved token yet, so
   siboot's own try of it hasn't met Apple's answers here.
+- **0.20.1** signs in again: since 2026-11-20 Apple has answered every
+  sign-in through the Mac anisette servers with HTTP 503 (#153), turning away
+  any client that calls its system `macOS`, and siboot reported a Mac on
+  macOS 26.6. It now reports one on macOS 10.15.7, the newest that still says
+  `Mac OS X` (SideInstaller 2.1.1's isideload, through the submodule). It also
+  starts on anisette.lillq.me, a pool that hands out a client Apple lets
+  through: first, or after the servers that share the last good one's
+  anisette identity (and with it the saved token), since lillq's work nowhere
+  else. Tested on macOS (121 tests) and through rust-core's `apple_session`
+  with a made-up account: `init` through lillq and new.ani.sidestore.io got
+  Apple's -20970 where 0.20.0's Mac gets 503. The static build ran
+  `--version` in Alpine. Not signed in with a real account yet.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account on more than
 one team, one at its certificate or App ID limit (siboot then asks which

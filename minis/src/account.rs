@@ -46,10 +46,12 @@ use crate::team::{self, Kind};
 use crate::{ui, Args};
 
 /// Anisette servers on Apple's macOS ADI library, in the order SideInstaller's
-/// Auto tries them (`AnisetteServer.macADIOrder`), then its Windows-library one.
-/// Android-library servers are left out, as there: Apple refuses the token they
-/// lead to (-80046) after the password and code have gone through.
+/// Auto tries them: lillq's pool (`POOL`), then the others
+/// (`AnisetteServer.macADIOrder`), then its Windows-library one. Android-library
+/// servers are left out, as there: Apple refuses the token they lead to
+/// (-80046) after the password and code have gone through.
 pub const SERVERS: &[&str] = &[
+    POOL,
     "https://new.ani.sidestore.io",
     "https://mac-ani.jkcoxson.com",
     "https://ani.iloader.app",
@@ -58,6 +60,14 @@ pub const SERVERS: &[&str] = &[
     "https://ani2.stikstore.app",
     "https://win.ani.sidestore.io",
 ];
+
+/// anisette.lillq.me, a pool of servers that checks hourly which clients Apple
+/// lets through and hands out one that passes (SideInstaller's
+/// `ADILibrary.pool`), first since 0.20.1. Its anisette identities work on no
+/// other server, and theirs not on it, so it's tried after the servers that
+/// share the last good one's identity: a saved token only works with the
+/// identity it was issued to.
+const POOL: &str = "https://anisette.lillq.me";
 
 /// The name the signing certificate is made for, as Xcode names a Mac's.
 const MACHINE_NAME: &str = "siboot";
@@ -654,20 +664,32 @@ async fn list_kinds(
 }
 
 /// `pick` alone when given; otherwise the last server that worked, then the
-/// rest of `SERVERS`.
+/// rest of `SERVERS`: when the last one was a macOS server other than lillq's
+/// (`POOL`), the others that take its identity come before lillq, as in
+/// SideInstaller's `AnisetteServer.candidates`.
 fn candidates(pick: Option<&str>, last: Option<&str>) -> Vec<String> {
     if let Some(pick) = pick {
         return vec![pick.trim().trim_end_matches('/').to_string()];
     }
+    let trim = |s: &str| s.trim().trim_end_matches('/').to_string();
+    let last = last.map(trim).filter(|s| !s.is_empty());
+    let shares_identity = |s: &str| s != POOL && s != WINDOWS_SERVER;
+    let mut order: Vec<String> = last.iter().cloned().collect();
+    if last.as_deref().is_some_and(|l| SERVERS.contains(&l) && shares_identity(l)) {
+        order.extend(SERVERS.iter().filter(|s| shares_identity(**s)).map(|s| s.to_string()));
+    }
+    order.extend(SERVERS.iter().map(|s| s.to_string()));
     let mut out: Vec<String> = Vec::new();
-    for s in last.into_iter().chain(SERVERS.iter().copied()) {
-        let s = s.trim().trim_end_matches('/').to_string();
-        if !s.is_empty() && !out.contains(&s) {
+    for s in order {
+        if !out.contains(&s) {
             out.push(s);
         }
     }
     out
 }
+
+/// The one server in `SERVERS` on Apple's Windows library.
+const WINDOWS_SERVER: &str = "https://win.ani.sidestore.io";
 
 fn last_server_path(home: &Path) -> PathBuf {
     home.join("anisette-server")
@@ -1048,6 +1070,20 @@ mod tests {
             "no duplicate of the last good one"
         );
         assert_eq!(candidates(None, None)[0], SERVERS[0]);
+        assert_eq!(
+            candidates(None, None)[..2],
+            ["https://anisette.lillq.me", "https://new.ani.sidestore.io"]
+        );
+        // lillq's identities work nowhere else: after a macOS server, the
+        // others that take its identity (and its saved token) come first.
+        let after_mac = candidates(None, Some("https://new.ani.sidestore.io"));
+        let lillq = after_mac.iter().position(|s| s == POOL).unwrap();
+        assert_eq!(lillq, SERVERS.len() - 2, "{after_mac:?}");
+        assert_eq!(after_mac.last().unwrap(), WINDOWS_SERVER);
+        assert_eq!(after_mac.len(), SERVERS.len());
+        // After lillq or the Windows server, lillq's next in line anyway.
+        assert_eq!(candidates(None, Some(POOL)), SERVERS);
+        assert_eq!(candidates(None, Some(WINDOWS_SERVER))[1], POOL);
         assert_eq!(
             candidates(
                 Some("https://example.org/"),
