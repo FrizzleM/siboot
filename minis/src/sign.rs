@@ -1,8 +1,8 @@
-//! Step 5: fetch SideInstaller and sign it for this iPhone, as Side by Side
-//! does for another one: register the device, then isideload's `sign_app`
-//! with the app group and no Increased Memory Limit (`SideBySideView.signApp`).
+//! Step 5: sign the IPA step 1 got (download.rs) for this iPhone, as Side by
+//! Side does for another one: register the device, then isideload's
+//! `sign_app` with the app group and no Increased Memory Limit
+//! (`SideBySideView.signApp`).
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use isideload::sideload::sideloader::MemoryLimit;
@@ -10,11 +10,7 @@ use isideload::sideload::sideloader::MemoryLimit;
 use crate::account::Session;
 use crate::fail::{Fail, Result};
 use crate::tunnel::DeviceInfo;
-use crate::{ui, Args, VERSION};
-
-/// The release Side by Side installs (`SideBySideView.releaseIPA`).
-pub const RELEASE_IPA: &str =
-    "https://github.com/FrizzleM/SideInstaller/releases/latest/download/SideInstaller.ipa";
+use crate::ui;
 
 pub struct Signed {
     /// The signed `.app` folder, ready to upload.
@@ -23,111 +19,6 @@ pub struct Signed {
     pub name: String,
     /// `CFBundleShortVersionString`, when it has one.
     pub version: Option<String>,
-}
-
-/// `--ipa` as a path, or the URL it names, or SideInstaller's latest release.
-pub async fn fetch_ipa(args: &Args) -> Result<PathBuf> {
-    match args.ipa.as_deref() {
-        Some(source) if !source.starts_with("https://") && !source.starts_with("http://") => {
-            let path = PathBuf::from(source);
-            check_ipa(&path)?;
-            ui::ok(&format!("using {}", path.display()));
-            Ok(path)
-        }
-        source => {
-            let url = source.unwrap_or(RELEASE_IPA);
-            let dir = args.home.join("downloads");
-            std::fs::create_dir_all(&dir).map_err(|e| {
-                Fail::new(format!("Couldn't create {}.", dir.display()), e.to_string())
-            })?;
-            download(url, &dir.join("SideInstaller.ipa")).await
-        }
-    }
-}
-
-async fn download(url: &str, dest: &Path) -> Result<PathBuf> {
-    ui::status("downloading SideInstaller");
-    ui::detail(url);
-    let client = reqwest::Client::builder()
-        .user_agent(format!("siboot/{VERSION}"))
-        .build()
-        .map_err(|e| Fail::new("Couldn't start a download.", e.to_string()))?;
-    let mut response = client.get(url).send().await.map_err(|e| {
-        Fail::new(
-            "Couldn't download SideInstaller. Check the internet connection (LocalDevVPN only \
-             routes 10.7.0.1, so it isn't the cause).",
-            crate::error_text::error_text(&e),
-        )
-    })?;
-    if !response.status().is_success() {
-        return Err(Fail::new(
-            format!(
-                "GitHub answered {} for the SideInstaller download. Try again in a minute.",
-                response.status()
-            ),
-            url.to_string(),
-        ));
-    }
-    let total = response.content_length();
-    let partial = dest.with_extension("ipa.part");
-    let mut file = std::fs::File::create(&partial).map_err(|e| {
-        Fail::new(
-            format!("Couldn't write {}.", partial.display()),
-            e.to_string(),
-        )
-    })?;
-    let mut received: u64 = 0;
-    loop {
-        let chunk = response.chunk().await.map_err(|e| {
-            Fail::new(
-                "The SideInstaller download broke off. Run siboot again.",
-                e.to_string(),
-            )
-        })?;
-        let Some(chunk) = chunk else { break };
-        file.write_all(&chunk).map_err(|e| {
-            Fail::new(
-                format!("Couldn't write {}.", partial.display()),
-                e.to_string(),
-            )
-        })?;
-        received += chunk.len() as u64;
-        if let Some(total) = total.filter(|t| *t > 0) {
-            ui::progress("downloaded", received, total);
-        }
-    }
-    ui::progress_end();
-    drop(file);
-    std::fs::rename(&partial, dest)
-        .map_err(|e| Fail::new(format!("Couldn't write {}.", dest.display()), e.to_string()))?;
-    check_ipa(dest)?;
-    ui::ok(&format!(
-        "downloaded SideInstaller ({:.1} MB)",
-        received as f64 / 1_048_576.0
-    ));
-    Ok(dest.to_path_buf())
-}
-
-/// An IPA is a zip: an error page or a truncated download isn't, and would
-/// only fail later, inside the signer.
-fn check_ipa(path: &Path) -> Result<()> {
-    let mut magic = [0u8; 4];
-    let read =
-        std::fs::File::open(path).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut magic));
-    match read {
-        Ok(()) if &magic == b"PK\x03\x04" => Ok(()),
-        Ok(()) => Err(Fail::new(
-            format!(
-                "{} isn't an IPA. GitHub may have returned an error page: try again in a minute.",
-                path.display()
-            ),
-            format!("first bytes {magic:02x?}"),
-        )),
-        Err(e) => Err(Fail::new(
-            format!("Couldn't read {}.", path.display()),
-            e.to_string(),
-        )),
-    }
 }
 
 pub async fn sign(session: &mut Session, ipa: &Path, device: &DeviceInfo) -> Result<Signed> {
@@ -204,22 +95,6 @@ fn bundle_info(app_dir: &Path) -> Result<(String, String, Option<String>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_a_zip_passes_as_an_ipa() {
-        let dir = std::env::temp_dir().join(format!("siboot-ipa-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let good = dir.join("good.ipa");
-        std::fs::write(&good, b"PK\x03\x04rest").unwrap();
-        assert!(check_ipa(&good).is_ok());
-        let page = dir.join("page.ipa");
-        std::fs::write(&page, b"<!DOCTYPE html>").unwrap();
-        assert!(check_ipa(&page)
-            .unwrap_err()
-            .advice
-            .contains("isn't an IPA"));
-        assert!(check_ipa(&dir.join("missing.ipa")).is_err());
-    }
 
     #[test]
     fn the_bundle_id_and_name_come_from_info_plist() {

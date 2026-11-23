@@ -15,6 +15,8 @@ connected, and Open Minis 1.16 or later. Then, in Open Minis's terminal:
 wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
 ```
 
+Where GitHub is blocked, see [below](#where-github-is-blocked).
+
 siboot opens a page over the terminal, in Minis's own browser
 ([below](#the-page)), that shows each step and asks its questions. The first
 time, it pairs this iPhone with itself: the page says what to do, and when you
@@ -44,10 +46,48 @@ To answer in the terminal instead, add `-s -- --terminal` after `sh` (or run
 `siboot --terminal` once it's installed).
 
 [`install.sh`](install.sh) downloads [`bin/siboot-aarch64`](bin) from this
-repository (a progress bar on one line while it does), checks it against the
-SHA-256 the script carries, keeps it at `~/.siboot/bin/siboot` (and
-`/usr/local/bin/siboot`), and runs it. After that, `siboot` on its own runs it
-again without downloading.
+repository (a progress bar on one line while it does), or through jsDelivr
+where GitHub doesn't answer, checks it against the SHA-256 the script carries,
+keeps it at `~/.siboot/bin/siboot` (and `/usr/local/bin/siboot`), and runs it.
+After that, `siboot` on its own runs it again without downloading.
+
+## Where GitHub is blocked
+
+siboot comes from GitHub, and so does SideInstaller, and GitHub is blocked in
+places: raw.githubusercontent.com and GitHub's release downloads are, in
+mainland China and Iran. A VPN gets through, but iOS runs one VPN at a time,
+and LocalDevVPN has to be the one that's on once siboot talks to the iPhone.
+So siboot needs GitHub only before that:
+
+- **siboot itself.** `install.sh` tries GitHub, then the same file through
+  jsDelivr's CDNs (`fastly.jsdelivr.net`, `gcore.jsdelivr.net`,
+  `cdn.jsdelivr.net`), and runs only a binary that matches the SHA-256 it
+  carries, wherever it came from. Where raw.githubusercontent.com doesn't
+  answer, get the script through jsDelivr too:
+
+  ```sh
+  wget -qO- https://fastly.jsdelivr.net/gh/FrizzleM/siboot@main/minis/install.sh | sh
+  ```
+
+  jsDelivr can be up to 12 hours behind GitHub, so that may install the
+  siboot before the newest. It's blocked at times too: if nothing answers, turn
+  on a VPN that reaches GitHub for this.
+- **SideInstaller.** Step 1 downloads its latest release before it dials the
+  iPhone, over whatever VPN is on, and keeps it in `~/.siboot/downloads`. So
+  run siboot with the VPN that reaches GitHub on: once SideInstaller is
+  downloaded and nothing answers at 10.7.0.1, siboot asks you to connect
+  LocalDevVPN, and carries on when you tap **Continue**. A later run only asks
+  GitHub which release is the latest (one redirect, nothing downloaded) and
+  downloads a newer one. When GitHub doesn't answer at all, it installs the
+  kept SideInstaller, and says which version that is. With nothing kept, it
+  stops and says how to get it.
+- **An IPA of your own.** `siboot --ipa PATH` installs one from a file, with no
+  download: mount the folder it's in (Minis › Settings › Mount External
+  Folders), and run `siboot --ipa /var/minis/mounts/<folder>/SideInstaller.ipa`.
+
+Apple's sign-in server and the anisette servers aren't GitHub, but step 4
+reaches them with LocalDevVPN on, so they have to answer without the other
+VPN.
 
 ## The screen
 
@@ -150,11 +190,11 @@ file is.
 
 | # | Step | How |
 |---|---|---|
-| 1 | Check | GitHub and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN, or on the port its pairing service has instead ([below](#the-pairing-port)) |
+| 1 | Check | Apple's sign-in server answers; SideInstaller's latest release is downloaded, or the copy kept from an earlier run when that's the latest or GitHub doesn't answer ([above](#where-github-is-blocked)); the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN, or on the port its pairing service has instead ([below](#the-pairing-port)), and when nothing answers, siboot asks for LocalDevVPN and dials again |
 | 2 | Pairing | the file saved in `~/.siboot` on an earlier run, while the iPhone accepts it; else the one siboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), when it's offering; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
 | 3 | Connect | pair-verify → `createListener` → TLS-PSK → CDTunnel → software TCP → RSD, as `tunnel_create_rppairing_multihost` does; lockdownd gives the UDID |
 | 4 | Apple ID | the Apple Account picked from those saved, or typed, and its saved token before any password ([below](#saved-apple-accounts)); then rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order; then the team, picked when Apple lists more than one ([below](#more-than-one-team)) |
-| 5 | Sign | the latest `SideInstaller.ipa` release, signed with isideload's `sign_app` (device registered, app group, no Increased Memory Limit), as Side by Side does |
+| 5 | Sign | the `SideInstaller.ipa` from step 1, signed with isideload's `sign_app` (device registered, app group, no Increased Memory Limit), as Side by Side does |
 | 6 | Install | AFC upload to `/PublicStaging`, every file checked, `installation_proxy` with `PackageType: Developer` |
 | 7 | Hand over | house_arrest writes the pairing file to `Library/Application Support/rp_pairing_file.plist` and marks it imported (`importedPairingFileName`), as Side by Side hands one to SideInstaller |
 
@@ -164,7 +204,8 @@ file is.
 `SIBOOT_APPLE_ID` and `SIBOOT_PASSWORD` skip the prompts. Everything is kept in
 `~/.siboot`: the pairing file (mode 600), isideload's store (signing key,
 anisette identity, saved token), the saved Apple Accounts' emails
-(`apple-accounts`, mode 600) and the download. The password is never written
+(`apple-accounts`, mode 600) and SideInstaller's latest release
+(`downloads/SideInstaller.ipa`, its version in `SideInstaller.json`). The password is never written
 anywhere.
 
 ## The pairing port
@@ -363,7 +404,15 @@ A static non-PIE executable, like the `pair_host` Minis's own packages ship.
 To publish a new build, copy it to `bin/siboot-aarch64` and put its
 `sha256sum` in `install.sh`'s `SHA256`, and its size in bytes in `SIZE`, in the
 same commit: the script refuses a binary that doesn't match (`SIZE` only draws
-its progress bar).
+its progress bar). Once it's pushed, have jsDelivr fetch both again, or its
+CDNs keep the old pair for up to 12 hours and the mirrors refuse the new
+script's binary:
+
+```sh
+for f in install.sh bin/siboot-aarch64; do
+  curl -fsS "https://purge.jsdelivr.net/gh/FrizzleM/siboot@main/minis/$f"
+done
+```
 
 ## Tests
 
@@ -391,7 +440,11 @@ forgetting one, a hand-edited file, mode 600, the menu's choices), the saved
 token (read where `apple_session.rs` keeps it, until ten minutes before its
 expiry, one naming another account or unreadable, which of Apple's answers
 turn it down) and the accounts that signed in before 0.20.0 starting the list,
-install refusals, and rust-core's own `apple_session.rs` and
+SideInstaller's download against a stand-in for GitHub (the latest release
+downloaded once and kept, a newer one replacing it, GitHub blocked with a kept
+copy and with none, a download refused, cut off or answered with a page while
+an older copy is kept, a captive portal's redirect, `check` downloading
+nothing, `--ipa` as a path and as a URL), install refusals, and rust-core's own `apple_session.rs` and
 `error_text.rs` tests. A test also stands in for a rootshell that iOS has
 paused: the connection goes through and nothing answers. The page's server is
 tested over real loopback connections: paths without the key, another Host,
@@ -405,8 +458,10 @@ closing. siboot-pair's own tests, with the same fake iPhone, are in
 `cargo run --example screens` plays pairing in Minis as the page and the live
 screen show it (`-- rootshell` plays rootshell's hand-off instead,
 `-- teams` asks which of two teams signs, `-- saved` offers two saved Apple
-Accounts, `-- saved run-out` one whose saved sign-in has run out, and
-`-- moved` and `-- nowhere` look for a pairing service that isn't on 49152).
+Accounts, `-- saved run-out` one whose saved sign-in has run out,
+`-- moved` and `-- nowhere` look for a pairing service that isn't on 49152,
+`-- vpn` downloads SideInstaller over another VPN and then asks for
+LocalDevVPN, and `-- blocked` installs the SideInstaller an earlier run kept).
 
 ## What's been tested
 
@@ -536,6 +591,23 @@ Accounts, `-- saved run-out` one whose saved sign-in has run out, and
   with a made-up account: `init` through lillq and new.ani.sidestore.io got
   Apple's -20970 where 0.20.0's Mac gets 503. The static build ran
   `--version` in Alpine. Not signed in with a real account yet.
+- **0.21.0** works where GitHub is blocked ([above](#where-github-is-blocked)):
+  step 1 downloads SideInstaller before it dials the iPhone and keeps it,
+  asks for LocalDevVPN when nothing answers there afterwards, and installs the
+  kept copy when GitHub doesn't answer; `install.sh` falls back to jsDelivr.
+  Tested on macOS (133 tests) and with the static build in Alpine, GitHub
+  blocked through the VM's own `/etc/hosts`: with nothing kept (it stops and
+  says how to get SideInstaller), GitHub answering (2.1.1 downloaded and kept,
+  its SHA-256 the one GitHub publishes for it), github.com refused, github.com
+  and then the release download taking the connection and never answering
+  (each given up after 20 s, the kept copy installed), and the release download
+  refused with an older copy kept. On macOS the page showed the Connect
+  LocalDevVPN card after a real download, and the next runs didn't download
+  again. `install.sh` with nothing but busybox: a refused source, a stale copy
+  and one that never answers (dropped after 30 s) each passed over for the
+  next, and with raw.githubusercontent.com blocked it installed 0.20.1 from
+  fastly.jsdelivr.net. Not run on an iPhone, nor from inside a country that
+  blocks GitHub.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account on more than
 one team, one at its certificate or App ID limit (siboot then asks which

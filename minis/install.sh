@@ -7,14 +7,27 @@
 #
 #   wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
 #
+# Where raw.githubusercontent.com is blocked (mainland China, Iran), the same
+# script through jsDelivr:
+#
+#   wget -qO- https://fastly.jsdelivr.net/gh/FrizzleM/siboot@main/minis/install.sh | sh
+#
 # Afterwards `siboot` runs it again, without downloading.
 set -eu
 
-BASE="${SIBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/main/minis}"
+# Where bin/siboot-aarch64 comes from, tried in order: GitHub, then the same
+# file through jsDelivr's CDNs, which can get through where GitHub's raw files
+# don't. Whichever answers, the copy has to match SHA256, so a mirror can't
+# change what runs. SIBOOT_BASE replaces the list (one URL, or several).
+SOURCES="https://raw.githubusercontent.com/FrizzleM/siboot/main/minis
+https://fastly.jsdelivr.net/gh/FrizzleM/siboot@main/minis
+https://gcore.jsdelivr.net/gh/FrizzleM/siboot@main/minis
+https://cdn.jsdelivr.net/gh/FrizzleM/siboot@main/minis"
+SOURCES="${SIBOOT_BASE:-$SOURCES}"
 # Of bin/siboot-aarch64, updated with it: a download that doesn't match (an
-# error page, a cut-off transfer) is never run. SIZE only draws the progress
-# bar.
-SHA256="724f070819d4b328d375f5e43f32f1b11508c1d4a4362411e9476263f057e8a6"
+# error page, a cut-off transfer, a stale mirror) is never run. SIZE only
+# draws the progress bar.
+SHA256="05d0a2ef07f99caca762efc6a6e4a7a8b1a691186dd1158759bf18755093c760"
 SIZE=12209056
 
 DIR="$HOME/.siboot/bin"
@@ -51,6 +64,7 @@ say() {
 }
 
 ok() { say ✓ '1;32' "$1"; }
+warn() { say ▲ '1;33' "$1"; }
 
 fail() {
   say ✗ '1;31' "$1" >&2
@@ -62,13 +76,19 @@ case "$(uname -m)" in
   *) fail "siboot runs in Open Minis on an iPhone (aarch64); this is $(uname -m)." ;;
 esac
 
+# Where a host is blocked, its connections can hang instead of failing:
+# give up on one that sends nothing for 30 seconds (busybox wget's own limit
+# is 15 minutes).
 fetch() {
   if command -v curl > /dev/null 2>&1; then
-    curl -fsSL "$1" -o "$2"
+    curl -fsSL --connect-timeout 20 -y 30 -Y 1 "$1" -o "$2"
   else
-    wget -qO "$2" "$1"
+    wget -q -T 30 -O "$2" "$1"
   fi
 }
+
+# "raw.githubusercontent.com" from a URL.
+host() { printf '%s\n' "$1" | cut -d / -f 3; }
 
 sha() { sha256sum "$1" | cut -d ' ' -f 1; }
 
@@ -113,16 +133,16 @@ frame() {
     "$spin" "$(repeat "$full" ━)" "$(repeat $((cells - full)) ─)" "$percent" "$size"
 }
 
-# The download in the background, and a frame every tenth of a second from
-# how much of it has arrived.
+# The download from one source in the background, and a frame every tenth
+# of a second from how much of it has arrived.
 download() {
   rm -f "$BIN.part"
   if [ -z "$FANCY" ]; then
-    echo "downloading siboot ($(megabytes "$SIZE") MB) …"
-    fetch "$BASE/bin/siboot-aarch64" "$BIN.part"
+    echo "downloading siboot ($(megabytes "$SIZE") MB) from $(host "$1") …"
+    fetch "$1/bin/siboot-aarch64" "$BIN.part"
     return
   fi
-  fetch "$BASE/bin/siboot-aarch64" "$BIN.part" < /dev/null 2> /dev/null &
+  fetch "$1/bin/siboot-aarch64" "$BIN.part" < /dev/null 2> /dev/null &
   pid=$!
   i=0
   while kill -0 "$pid" 2> /dev/null; do
@@ -138,17 +158,40 @@ mkdir -p "$DIR"
 if [ -f "$BIN" ] && [ "$(sha "$BIN")" = "$SHA256" ]; then
   ok "siboot is up to date"
 else
-  if ! download; then
+  got=
+  why=
+  mismatched=
+  for base in $SOURCES; do
+    if [ -n "$why" ]; then
+      warn "$why Trying $(host "$base")."
+    fi
+    if download "$base"; then
+      if [ "$(sha "$BIN.part")" = "$SHA256" ]; then
+        got=$base
+        break
+      fi
+      mismatched=1
+      why="The copy from $(host "$base") didn't match its checksum."
+    else
+      why="Couldn't download siboot from $(host "$base")."
+    fi
     rm -f "$BIN.part"
-    fail "Couldn't download siboot. Check the internet connection and try again."
-  fi
-  if [ "$(sha "$BIN.part")" != "$SHA256" ]; then
+  done
+  if [ -z "$got" ]; then
     rm -f "$BIN.part"
-    fail "The siboot download didn't match its checksum. Try again in a few minutes."
+    if [ -n "$mismatched" ]; then
+      fail "The siboot download didn't match its checksum: a new siboot may have just come out. Try again in a few minutes."
+    fi
+    fail "Couldn't download siboot from GitHub or its mirrors. Check the internet connection. Where GitHub is blocked, turn on a VPN that reaches it and run this again: siboot asks for LocalDevVPN once it has what it needs."
   fi
   chmod 755 "$BIN.part"
   mv "$BIN.part" "$BIN"
-  ok "siboot downloaded and checked ($(megabytes "$SIZE") MB)"
+  # Which source, when it wasn't the first.
+  case "$SOURCES" in
+    "$got"*) from= ;;
+    *) from=" from $(host "$got")" ;;
+  esac
+  ok "siboot downloaded$from and checked ($(megabytes "$SIZE") MB)"
 fi
 
 # So `siboot` works on its own from now on (Minis's shell runs as root).
