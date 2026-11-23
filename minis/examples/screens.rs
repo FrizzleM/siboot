@@ -11,6 +11,8 @@
 //! cargo run --example screens -- saved run-out # whose saved sign-in has run out
 //! cargo run --example screens -- moved         # the pairing service on 55021
 //! cargo run --example screens -- nowhere       # and on no port at all
+//! cargo run --example screens -- vpn           # another VPN on, then LocalDevVPN
+//! cargo run --example screens -- blocked       # GitHub blocked, SideStore kept
 //! cargo run --example screens -- developer-mode
 //! cargo run --example screens -- --plain       # the same, as plain lines
 //! cargo run --example screens -- --web         # the same, as the page
@@ -70,6 +72,13 @@ fn main() {
     } else {
         Port::Usual
     };
+    let github = if has("vpn") {
+        Github::OtherVpn
+    } else if has("blocked") {
+        Github::Blocked
+    } else {
+        Github::Answers
+    };
     let remembered = match (has("saved"), has("run-out")) {
         (true, false) => Some(Remembered::Lasting),
         (true, true) => Some(Remembered::RunOut),
@@ -78,7 +87,7 @@ fn main() {
     let code = if has("old-minis") {
         old_minis();
         1
-    } else if run(devmode, stop, has("rootshell"), has("teams"), port, remembered) {
+    } else if run(devmode, stop, has("rootshell"), has("teams"), port, github, remembered) {
         0
     } else {
         1
@@ -138,11 +147,65 @@ enum Port {
     Nowhere,
 }
 
+/// How GitHub answers step 1 (download.rs, preflight.rs).
+#[derive(Clone, Copy, PartialEq)]
+enum Github {
+    /// Through LocalDevVPN, as it does where GitHub isn't blocked.
+    Answers,
+    /// Through another VPN, on to reach it where it's blocked: SideStore
+    /// downloads, nothing answers at 10.7.0.1, and ssboot asks for LocalDevVPN.
+    OtherVpn,
+    /// Not at all, so ssboot installs the SideStore an earlier run kept.
+    Blocked,
+}
+
+/// Step 1's download of SideStore, before the iPhone is dialed.
+fn get_sidestore(github: Github) {
+    ui::activity("asking GitHub for SideStore's latest nightly");
+    wait(600);
+    if github == Github::Blocked {
+        ui::warn(
+            "Couldn't reach GitHub, so ssboot installs the SideStore nightly downloaded on an \
+             earlier run.",
+        );
+        return;
+    }
+    ui::status("downloading SideStore's nightly");
+    let total: u64 = 30_681_634;
+    for i in 0..=50u64 {
+        ui::progress("downloaded", total * i / 50, total);
+        wait(45);
+    }
+    ui::progress_end();
+    ui::ok("downloaded SideStore's nightly (29.3 MB)");
+}
+
 /// Step 1's dial of the pairing service, and the look through the iPhone's
 /// other ports that follows a refusal.
-fn reach(port: Port) -> bool {
+fn reach(port: Port, github: Github) -> bool {
     ui::activity("reaching this iPhone at 10.7.0.1:49152");
     wait(500);
+    if github == Github::OtherVpn {
+        wait(1500);
+        ui::detail("nothing answers at 10.7.0.1:49152: connect timed out after 8 s");
+        ui::status("connect LocalDevVPN when you're ready");
+        if !ui::get_ready(
+            "Connect LocalDevVPN",
+            &[
+                "Open LocalDevVPN and connect it. iOS runs one VPN at a time, so it takes the \
+                 place of any other: ssboot has SideStore already, and doesn't need GitHub \
+                 again.",
+                "Come back to Minis once LocalDevVPN shows Connected.",
+            ],
+            &[],
+            "Continue",
+        ) {
+            ui::failure("Stopped before LocalDevVPN was connected.", "");
+            return false;
+        }
+        ui::activity("reaching this iPhone at 10.7.0.1:49152");
+        wait(500);
+    }
     if port == Port::Usual {
         ui::ok("this iPhone answers on 10.7.0.1:49152 (RPPairing, wire protocol 26)");
         return true;
@@ -181,6 +244,7 @@ fn run(
     rootshell: bool,
     teams: bool,
     port: Port,
+    github: Github,
     remembered: Option<Remembered>,
 ) -> bool {
     let steps = [
@@ -194,27 +258,19 @@ fn run(
         ui::plan(&steps, 7);
     }
 
-    ui::step(1, "Checking LocalDevVPN, this iPhone and the internet");
-    for (what, took, answer) in [
-        (
-            "reaching github.com",
-            700,
-            "github.com answers, and SideStore's nightly is there",
-        ),
-        (
-            "reaching Apple's sign-in server",
-            600,
-            "Apple's sign-in server answers",
-        ),
-    ] {
-        ui::activity(what);
-        wait(took);
-        ui::ok(answer);
+    if devmode {
+        ui::step(1, "Checking LocalDevVPN and this iPhone");
+    } else {
+        ui::step(1, "Checking the internet, LocalDevVPN and this iPhone");
+        ui::activity("reaching Apple's sign-in server");
+        wait(600);
+        ui::ok("Apple's sign-in server answers");
+        get_sidestore(github);
     }
-    if !reach(port) {
+    if !reach(port, if devmode { Github::Answers } else { github }) {
         return false;
     }
-    ui::done("online, and the iPhone answers");
+    ui::done(if devmode { "the iPhone answers" } else { "SideStore's nightly · the iPhone answers" });
 
     ui::step(2, "Pairing this iPhone with ssboot");
     ui::activity("checking that Open Minis can pair this iPhone");
@@ -479,14 +535,6 @@ fn password_and_code() -> bool {
 /// signed in to, so the finish box goes by `kind` only.
 fn sign_and_install(id: &str, kind: team::Kind, _first: bool) -> bool {
     ui::step(5, "Signing SideStore for this iPhone");
-    ui::status("downloading SideStore");
-    let total: u64 = 30_681_634;
-    for i in 0..=60u64 {
-        ui::progress("downloaded", total * i / 60, total);
-        wait(45);
-    }
-    ui::progress_end();
-    ui::ok("downloaded SideStore (29.3 MB)");
     ui::activity("checking it's SideStore");
     wait(600);
     ui::ok("it's SideStore 0.7.0-20261027.1507");

@@ -29,6 +29,7 @@
 mod account;
 mod bridge;
 mod devmode;
+mod download;
 mod fail;
 #[cfg(test)]
 mod fake_iphone;
@@ -499,10 +500,14 @@ async fn pipeline(args: &Args) -> Result<()> {
     if devmode {
         ui::step(1, "Checking LocalDevVPN and this iPhone");
     } else {
-        ui::step(1, "Checking LocalDevVPN, this iPhone and the internet");
+        ui::step(1, "Checking the internet, LocalDevVPN and this iPhone");
     }
     let checked = preflight::run(args).await.map_err(note)?;
-    ui::done(if checked.online { "online, and the iPhone answers" } else { "the iPhone answers" });
+    ui::done(&match &checked.ipa {
+        Some(ipa) if args.command == Command::All => format!("{} · the iPhone answers", ipa.name()),
+        _ if checked.online => "online, and the iPhone answers".into(),
+        _ => "the iPhone answers".into(),
+    });
     if args.command == Command::Check {
         ui::finish("Ready", &["Run ssboot to install SideStore."]);
         return Ok(());
@@ -513,6 +518,8 @@ async fn pipeline(args: &Args) -> Result<()> {
         device: checked.device,
         ..args.clone()
     };
+    // Got in step 1, before LocalDevVPN had to be the VPN that's on.
+    let ipa = checked.ipa;
 
     ui::step(2, "Pairing this iPhone with ssboot");
     let pairing_path = args.pairing_path();
@@ -550,8 +557,8 @@ async fn pipeline(args: &Args) -> Result<()> {
     ui::done(&session.team);
 
     ui::step(5, "Signing SideStore for this iPhone");
-    let ipa = sign::fetch_ipa(args).await?;
-    let build = sign::inspect(&ipa)?;
+    let ipa = ipa.ok_or_else(|| Fail::new("ssboot has no IPA to sign.", "step 1 got none"))?;
+    let build = sign::inspect(&ipa.path)?;
     let version = build.short_version().map(str::to_string);
     ui::ok(&match &version {
         Some(version) => format!("it's SideStore {version}"),
@@ -565,7 +572,7 @@ async fn pipeline(args: &Args) -> Result<()> {
              nightly, which reads this iPhone's pairing.",
         );
     }
-    let signed = sign::sign(&mut session, &ipa, &device).await?;
+    let signed = sign::sign(&mut session, &ipa.path, &device).await?;
     // Built now, while the tunnel is closed: iOS drops one left idle.
     let account_config = if build.imports_account_silently {
         ui::activity("preparing the signing certificate for SideStore");

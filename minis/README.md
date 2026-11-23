@@ -18,6 +18,8 @@ connected, and Open Minis 1.16 or later. Then, in Open Minis's terminal:
 wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/minis/install.sh | sh
 ```
 
+Where GitHub is blocked, see [below](#where-github-is-blocked).
+
 ssboot opens a page over the terminal, in Minis's own browser
 ([below](#the-page)), that shows each step and asks its questions. The first
 time, it pairs this iPhone with itself: the page says what to do, and when you
@@ -52,10 +54,48 @@ To answer in the terminal instead, add `-s -- --terminal` after `sh` (or run
 `ssboot --terminal` once it's installed).
 
 [`install.sh`](install.sh) downloads [`bin/ssboot-aarch64`](bin) from this
-branch (a progress bar on one line while it does), checks it against the
-SHA-256 the script carries, keeps it at `~/.ssboot/bin/ssboot` (and
-`/usr/local/bin/ssboot`), and runs it. After that, `ssboot` on its own runs it
-again without downloading.
+branch (a progress bar on one line while it does), or through jsDelivr where
+GitHub doesn't answer, checks it against the SHA-256 the script carries, keeps
+it at `~/.ssboot/bin/ssboot` (and `/usr/local/bin/ssboot`), and runs it. After
+that, `ssboot` on its own runs it again without downloading.
+
+## Where GitHub is blocked
+
+ssboot comes from GitHub, and so does SideStore, and GitHub is blocked in
+places: raw.githubusercontent.com and GitHub's release downloads are, in
+mainland China and Iran. A VPN gets through, but iOS runs one VPN at a time,
+and LocalDevVPN has to be the one that's on once ssboot talks to the iPhone.
+So ssboot needs GitHub only before that:
+
+- **ssboot itself.** `install.sh` tries GitHub, then the same file through
+  jsDelivr's CDNs (`fastly.jsdelivr.net`, `gcore.jsdelivr.net`,
+  `cdn.jsdelivr.net`), and runs only a binary that matches the SHA-256 it
+  carries, wherever it came from. Where raw.githubusercontent.com doesn't
+  answer, get the script through jsDelivr too:
+
+  ```sh
+  wget -qO- https://fastly.jsdelivr.net/gh/FrizzleM/siboot@ssboot/minis/install.sh | sh
+  ```
+
+  jsDelivr can be up to 12 hours behind GitHub, so that may install the
+  ssboot before the newest. It's blocked at times too: if nothing answers, turn
+  on a VPN that reaches GitHub for this.
+- **SideStore.** Step 1 downloads its nightly before it dials the iPhone,
+  over whatever VPN is on, and keeps it in `~/.ssboot/downloads`. So run
+  ssboot with the VPN that reaches GitHub on: once SideStore is downloaded and
+  nothing answers at 10.7.0.1, ssboot asks you to connect LocalDevVPN, and
+  carries on when you tap **Continue**. The nightly's tag never changes, but
+  the redirect GitHub answers it with names each upload, so a later run asks
+  for only that (nothing downloaded) and downloads a newer upload. When GitHub
+  doesn't answer at all, it installs the kept nightly, and says so. With
+  nothing kept, it stops and says how to get it.
+- **An IPA of your own.** `ssboot --ipa PATH` installs one from a file, with no
+  download: mount the folder it's in (Minis › Settings › Mount External
+  Folders), and run `ssboot --ipa /var/minis/mounts/<folder>/SideStore.ipa`.
+
+Apple's sign-in server and the anisette servers aren't GitHub, but step 4
+reaches them with LocalDevVPN on, so they have to answer without the other
+VPN.
 
 ## Which SideStore
 
@@ -201,11 +241,11 @@ file is.
 
 | # | Step | How |
 |---|---|---|
-| 1 | Check | GitHub (SideStore's nightly) and Apple's sign-in server answer; the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN, or on the port its pairing service has instead ([below](#the-pairing-port)) |
+| 1 | Check | Apple's sign-in server answers; SideStore's nightly is downloaded, or the copy kept from an earlier run when that's the latest upload or GitHub doesn't answer ([above](#where-github-is-blocked)); the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN, or on the port its pairing service has instead ([below](#the-pairing-port)), and when nothing answers, ssboot asks for LocalDevVPN and dials again |
 | 2 | Pairing | the file saved in `~/.ssboot` on an earlier run, while the iPhone accepts it; else the one siboot saved in `~/.siboot`, which is then copied; else the one ssboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), when it's offering; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
 | 3 | Connect | pair-verify → `createListener` → TLS-PSK → CDTunnel → software TCP → RSD, as `tunnel_create_rppairing_multihost` does; lockdownd gives the UDID |
 | 4 | Apple ID | the Apple Account picked from those saved, or typed, and its saved token before any password ([below](#saved-apple-accounts)); then rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order; then the team, picked when Apple lists more than one ([below](#more-than-one-team)) |
-| 5 | Sign | SideStore's nightly, read first (SideStore? which pairing files does it read? does it take `Account.sideconf` quietly?), then signed with isideload's `sign_app` (device registered, app group, no Increased Memory Limit), as SideInstaller signs it |
+| 5 | Sign | SideStore's nightly from step 1, read first (SideStore? which pairing files does it read? does it take `Account.sideconf` quietly?), then signed with isideload's `sign_app` (device registered, app group, no Increased Memory Limit), as SideInstaller signs it |
 | 6 | Install | AFC upload to `/PublicStaging`, every file checked, `installation_proxy` with `PackageType: Developer` |
 | 7 | Hand over | house_arrest writes the pairing files and settings [above](#what-sidestore-is-handed) into SideStore's container |
 
@@ -215,8 +255,10 @@ file is.
 `SSBOOT_APPLE_ID` and `SSBOOT_PASSWORD` skip the prompts. Everything is kept in
 `~/.ssboot`: the pairing file (mode 600), isideload's store (signing key,
 anisette identity, saved token), the saved Apple Accounts' emails
-(`apple-accounts`, mode 600) and the download. The password is never written
-anywhere. Nothing is written into `~/.siboot`: ssboot only reads it.
+(`apple-accounts`, mode 600) and SideStore's nightly
+(`downloads/SideStore.ipa`, its upload in `SideStore.json`). The password is
+never written anywhere. Nothing is written into `~/.siboot`: ssboot only reads
+it.
 
 ## The pairing port
 
@@ -412,7 +454,15 @@ A static non-PIE executable, like the `pair_host` Minis's own packages ship.
 To publish a new build, copy it to `bin/ssboot-aarch64` and put its
 `sha256sum` in `install.sh`'s `SHA256`, and its size in bytes in `SIZE`, in the
 same commit: the script refuses a binary that doesn't match (`SIZE` only draws
-its progress bar).
+its progress bar). Once it's pushed, have jsDelivr fetch both again, or its
+CDNs keep the old pair for up to 12 hours and the mirrors refuse the new
+script's binary:
+
+```sh
+for f in install.sh bin/ssboot-aarch64; do
+  curl -fsS "https://purge.jsdelivr.net/gh/FrizzleM/siboot@ssboot/minis/$f"
+done
+```
 
 ## Tests
 
@@ -441,8 +491,12 @@ Apple Accounts (the order, at most seven, forgetting one, a hand-edited file,
 mode 600, the menu's choices), the saved token (read where `apple_session.rs`
 keeps it, until ten minutes before its expiry, one naming another account or
 unreadable, which of Apple's answers turn it down) and the accounts that
-signed in before 0.3.5 starting the list, install
-refusals, and rust-core's own `apple_session.rs` and `error_text.rs` tests.
+signed in before 0.3.5 starting the list,
+SideStore's download against a stand-in for GitHub (the nightly downloaded once
+and kept, a newer upload replacing it, GitHub blocked with a kept copy and with
+none, a download refused, cut off or answered with a page while an older copy
+is kept, a captive portal's redirect, `check` downloading nothing, `--ipa` as a
+path and as a URL), install refusals, and rust-core's own `apple_session.rs` and `error_text.rs` tests.
 The page's server is tested over real loopback connections: paths without the
 key, another Host, POSTs that aren't JSON or come from another origin, oversized
 requests, events replayed and resumed after a reconnect, one progress event a
@@ -522,4 +576,15 @@ service that isn't on 49152.
   0.20.0 was, and ssboot's own tests on macOS and Alpine aarch64. Not signed
   in to Apple with a saved token yet.
 
-siboot's own history, up to 0.20.0, is in its README on the `main` branch.
+- **0.3.6** merges siboot 0.20.1 and 0.21.0. 0.20.1 signs in again since Apple
+  turned away clients that call their system `macOS` (HTTP 503), starting on
+  anisette.lillq.me. 0.21.0 works where GitHub is blocked
+  ([above](#where-github-is-blocked)): step 1 downloads SideStore's nightly
+  before it dials the iPhone and keeps it, keyed on the upload GitHub's
+  redirect names since the `nightly` tag never changes, asks for LocalDevVPN
+  when nothing answers there afterwards, and installs the kept nightly when
+  GitHub doesn't answer; `install.sh` falls back to jsDelivr (`@ssboot`).
+  Tested as siboot 0.21.0 was, and ssboot's own tests on macOS and Alpine
+  aarch64. Not run on an iPhone.
+
+siboot's own history, up to 0.21.0, is in its README on the `main` branch.

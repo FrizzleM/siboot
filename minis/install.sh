@@ -7,14 +7,27 @@
 #
 #   wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/minis/install.sh | sh
 #
+# Where raw.githubusercontent.com is blocked (mainland China, Iran), the same
+# script through jsDelivr:
+#
+#   wget -qO- https://fastly.jsdelivr.net/gh/FrizzleM/siboot@ssboot/minis/install.sh | sh
+#
 # Afterwards `ssboot` runs it again, without downloading.
 set -eu
 
-BASE="${SSBOOT_BASE:-https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/minis}"
+# Where bin/ssboot-aarch64 comes from, tried in order: GitHub, then the same
+# file through jsDelivr's CDNs, which can get through where GitHub's raw files
+# don't. Whichever answers, the copy has to match SHA256, so a mirror can't
+# change what runs. SSBOOT_BASE replaces the list (one URL, or several).
+SOURCES="https://raw.githubusercontent.com/FrizzleM/siboot/ssboot/minis
+https://fastly.jsdelivr.net/gh/FrizzleM/siboot@ssboot/minis
+https://gcore.jsdelivr.net/gh/FrizzleM/siboot@ssboot/minis
+https://cdn.jsdelivr.net/gh/FrizzleM/siboot@ssboot/minis"
+SOURCES="${SSBOOT_BASE:-$SOURCES}"
 # Of bin/ssboot-aarch64, updated with it: a download that doesn't match (an
-# error page, a cut-off transfer) is never run. SIZE only draws the progress
-# bar.
-SHA256="5e471dbc65e6be9283f2dd8874311f4771c9bb9ccdaacc71c86713db27205e2f"
+# error page, a cut-off transfer, a stale mirror) is never run. SIZE only
+# draws the progress bar.
+SHA256="cd0acf4f92c48c1ae593333f5e094fffa63b2f23dcfd9d15b683d09e2a32141b"
 SIZE=12340160
 
 DIR="$HOME/.ssboot/bin"
@@ -51,6 +64,7 @@ say() {
 }
 
 ok() { say ✓ '1;32' "$1"; }
+warn() { say ▲ '1;33' "$1"; }
 
 fail() {
   say ✗ '1;31' "$1" >&2
@@ -62,13 +76,19 @@ case "$(uname -m)" in
   *) fail "ssboot runs in Open Minis on an iPhone (aarch64); this is $(uname -m)." ;;
 esac
 
+# Where a host is blocked, its connections can hang instead of failing:
+# give up on one that sends nothing for 30 seconds (busybox wget's own limit
+# is 15 minutes).
 fetch() {
   if command -v curl > /dev/null 2>&1; then
-    curl -fsSL "$1" -o "$2"
+    curl -fsSL --connect-timeout 20 -y 30 -Y 1 "$1" -o "$2"
   else
-    wget -qO "$2" "$1"
+    wget -q -T 30 -O "$2" "$1"
   fi
 }
+
+# "raw.githubusercontent.com" from a URL.
+host() { printf '%s\n' "$1" | cut -d / -f 3; }
 
 sha() { sha256sum "$1" | cut -d ' ' -f 1; }
 
@@ -113,16 +133,16 @@ frame() {
     "$spin" "$(repeat "$full" ━)" "$(repeat $((cells - full)) ─)" "$percent" "$size"
 }
 
-# The download in the background, and a frame every tenth of a second from
-# how much of it has arrived.
+# The download from one source in the background, and a frame every tenth
+# of a second from how much of it has arrived.
 download() {
   rm -f "$BIN.part"
   if [ -z "$FANCY" ]; then
-    echo "downloading ssboot ($(megabytes "$SIZE") MB) …"
-    fetch "$BASE/bin/ssboot-aarch64" "$BIN.part"
+    echo "downloading ssboot ($(megabytes "$SIZE") MB) from $(host "$1") …"
+    fetch "$1/bin/ssboot-aarch64" "$BIN.part"
     return
   fi
-  fetch "$BASE/bin/ssboot-aarch64" "$BIN.part" < /dev/null 2> /dev/null &
+  fetch "$1/bin/ssboot-aarch64" "$BIN.part" < /dev/null 2> /dev/null &
   pid=$!
   i=0
   while kill -0 "$pid" 2> /dev/null; do
@@ -138,17 +158,40 @@ mkdir -p "$DIR"
 if [ -f "$BIN" ] && [ "$(sha "$BIN")" = "$SHA256" ]; then
   ok "ssboot is up to date"
 else
-  if ! download; then
+  got=
+  why=
+  mismatched=
+  for base in $SOURCES; do
+    if [ -n "$why" ]; then
+      warn "$why Trying $(host "$base")."
+    fi
+    if download "$base"; then
+      if [ "$(sha "$BIN.part")" = "$SHA256" ]; then
+        got=$base
+        break
+      fi
+      mismatched=1
+      why="The copy from $(host "$base") didn't match its checksum."
+    else
+      why="Couldn't download ssboot from $(host "$base")."
+    fi
     rm -f "$BIN.part"
-    fail "Couldn't download ssboot. Check the internet connection and try again."
-  fi
-  if [ "$(sha "$BIN.part")" != "$SHA256" ]; then
+  done
+  if [ -z "$got" ]; then
     rm -f "$BIN.part"
-    fail "The ssboot download didn't match its checksum. Try again in a few minutes."
+    if [ -n "$mismatched" ]; then
+      fail "The ssboot download didn't match its checksum: a new ssboot may have just come out. Try again in a few minutes."
+    fi
+    fail "Couldn't download ssboot from GitHub or its mirrors. Check the internet connection. Where GitHub is blocked, turn on a VPN that reaches it and run this again: ssboot asks for LocalDevVPN once it has what it needs."
   fi
   chmod 755 "$BIN.part"
   mv "$BIN.part" "$BIN"
-  ok "ssboot downloaded and checked ($(megabytes "$SIZE") MB)"
+  # Which source, when it wasn't the first.
+  case "$SOURCES" in
+    "$got"*) from= ;;
+    *) from=" from $(host "$got")" ;;
+  esac
+  ok "ssboot downloaded$from and checked ($(megabytes "$SIZE") MB)"
 fi
 
 # So `ssboot` works on its own from now on (Minis's shell runs as root).

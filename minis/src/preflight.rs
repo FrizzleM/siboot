@@ -5,8 +5,13 @@
 //! which carries everything to this iPhone. `ssboot check` also says whether
 //! this Open Minis can pair the iPhone.
 //!
+//! SideStore is downloaded here, before the iPhone is dialed
+//! (download.rs): where GitHub is blocked, the VPN that reaches it is on until
+//! then, and LocalDevVPN only from then on. When nothing answers at the
+//! iPhone's address after that, ssboot asks for LocalDevVPN and dials again.
+//!
 //! The iPhone's pairing service is nearly always on port 49152, but not
-//! always. When it isn't there, this step finds the port it's on ([`reach`]),
+//! always. When it isn't there, this step finds the port it's on ([`reach_from`]),
 //! and the later steps dial that one.
 
 use std::collections::VecDeque;
@@ -22,6 +27,7 @@ use tokio::task::JoinSet;
 use tokio::time::timeout;
 
 use crate::bridge::{Bridge, BridgeError};
+use crate::download::{self, Ipa};
 use crate::fail::{chain, Fail, Result};
 use crate::{ui, Args, Command};
 
@@ -41,7 +47,20 @@ pub struct Checked {
     /// Where the iPhone's pairing service answered: the address ssboot was
     /// given, or the port the service turned out to be on.
     pub device: SocketAddr,
+    /// With the internet checked: the IPA. A full run has it here for step 5;
+    /// `ssboot check` only looked.
+    pub ipa: Option<Ipa>,
 }
+
+/// Asked for when nothing answers at the iPhone's address once SideStore is
+/// here: no VPN carries it, or one that isn't LocalDevVPN, like one that
+/// reaches GitHub where it's blocked.
+const SWITCH_TITLE: &str = "Connect LocalDevVPN";
+const SWITCH_STEPS: [&str; 2] = [
+    "Open LocalDevVPN and connect it. iOS runs one VPN at a time, so it takes the place of any \
+     other: ssboot has SideStore already, and doesn't need GitHub again.",
+    "Come back to Minis once LocalDevVPN shows Connected.",
+];
 
 pub async fn run(args: &Args) -> Result<Checked> {
     let in_minis = crate::web::available() || std::env::var_os("SSBOOT_MINIS_BIN").is_some();
@@ -52,11 +71,33 @@ pub async fn run(args: &Args) -> Result<Checked> {
     }
     // The tunnel stays on this iPhone; sign-in and the download don't.
     let online = args.command == Command::All || args.command == Command::Check;
-    if online {
-        check_online(args).await?;
-    }
+    let installs = args.command == Command::All;
+    let ipa = if online {
+        check_apple().await?;
+        let mode = if installs { download::Mode::Get } else { download::Mode::Look };
+        Some(download::get(args, mode).await?)
+    } else {
+        None
+    };
     ui::activity(&format!("reaching this iPhone at {}", args.device));
-    let (device, found) = reach(args.device, DYNAMIC_PORTS, &KNOCKS).await?;
+    let mut first = probe(args.device).await;
+    if let Err(Miss::Unreachable(f)) = &first {
+        if installs && ui::interactive() {
+            ui::detail(&format!("nothing answers at {}: {}", args.device, f.raw));
+            ui::status("connect LocalDevVPN when you're ready");
+            if !ui::get_ready(SWITCH_TITLE, &SWITCH_STEPS, &[], "Continue") {
+                return Err(Fail::by_user("Stopped before LocalDevVPN was connected."));
+            }
+            ui::activity(&format!("reaching this iPhone at {}", args.device));
+            first = probe(args.device).await;
+        }
+    }
+    let (device, found) = reach_from(args.device, first, DYNAMIC_PORTS, &KNOCKS)
+        .await
+        .map_err(|f| match &ipa {
+            Some(ipa) if installs && ipa.github => with_kept_note(f, ipa),
+            _ => f,
+        })?;
     ui::ok(&format!(
         "this iPhone answers on {device} (RPPairing, wire protocol {})",
         found.wire_version
@@ -77,7 +118,20 @@ pub async fn run(args: &Args) -> Result<Checked> {
             )),
         }
     }
-    Ok(Checked { online, device })
+    Ok(Checked { online, device, ipa })
+}
+
+/// A run that reached GitHub and stopped at the iPhone: SideStore is kept
+/// now, so the next one, with LocalDevVPN, needn't reach GitHub.
+fn with_kept_note(f: Fail, ipa: &Ipa) -> Fail {
+    Fail {
+        advice: format!(
+            "{} {} is downloaded and kept, so the next run doesn't need GitHub.",
+            f.advice,
+            ipa.name()
+        ),
+        ..f
+    }
 }
 
 /// Stop in an Open Minis older than 1.16. Minis doesn't tell the shell its
@@ -96,10 +150,10 @@ pub async fn check_minis(bridge: &Bridge) -> Result<()> {
     }
 }
 
-/// GitHub (the IPA) and Apple's sign-in server answer over TLS. Apple's
-/// `gsa.apple.com` chains to Apple Root CA, which Alpine's bundle lacks, so it's
-/// trusted here as isideload's GrandSlam client trusts it.
-async fn check_online(args: &Args) -> Result<()> {
+/// Apple's sign-in server answers over TLS. Its `gsa.apple.com` chains to
+/// Apple Root CA, which Alpine's bundle lacks, so it's trusted here as
+/// isideload's GrandSlam client trusts it. GitHub's turn is download.rs's.
+async fn check_apple() -> Result<()> {
     let apple_root = reqwest::Certificate::from_der(isideload::sideload::cert_identity::APPLE_ROOT)
         .map_err(|e| Fail::new("Couldn't load Apple's root certificate.", e.to_string()))?;
     let client = reqwest::Client::builder()
@@ -109,31 +163,6 @@ async fn check_online(args: &Args) -> Result<()> {
         .build()
         .map_err(|e| Fail::new("Couldn't start an HTTPS client.", e.to_string()))?;
 
-    let downloads = args
-        .ipa
-        .as_deref()
-        .is_none_or(|ipa| ipa.starts_with("http"));
-    if downloads {
-        let url = args.ipa.as_deref().unwrap_or(crate::sign::NIGHTLY_IPA);
-        let what = if args.ipa.is_some() { "the SideStore IPA" } else { "SideStore's nightly" };
-        ui::activity(&format!("reaching {}", host_of(url)));
-        match client.head(url).send().await {
-            Ok(r) if r.status().is_success() => {
-                ui::ok(&format!("{} answers, and {what} is there", host_of(url)))
-            }
-            Ok(r) => ui::warn(&format!("{} answered {} for {what}.", host_of(url), r.status())),
-            Err(e) => {
-                return Err(Fail::new(
-                    format!(
-                        "Couldn't reach {}, where SideStore is downloaded from. Check the \
-                         internet connection.",
-                        host_of(url)
-                    ),
-                    crate::error_text::error_text(&e),
-                ))
-            }
-        }
-    }
     // Any HTTP answer proves DNS, the route and the certificate chain.
     ui::activity("reaching Apple's sign-in server");
     match client
@@ -151,12 +180,6 @@ async fn check_online(args: &Args) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// "github.com" for "https://github.com/SideStore/...".
-fn host_of(url: &str) -> &str {
-    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
-    rest.split(['/', ':']).next().filter(|h| !h.is_empty()).unwrap_or(url)
 }
 
 #[derive(Debug)]
@@ -203,12 +226,16 @@ const LOCKDOWN_PORT: u16 = 62078;
 /// 10.7.0.1:49152. Minis's shell can't browse Bonjour for that advert, so
 /// ssboot knocks on each port through LocalDevVPN instead. A closed port
 /// refuses at once, so it takes seconds; from a Mac over Wi-Fi, 9 s.
-async fn reach(
+///
+/// `first` is how the dial of `addr` went: step 1 may have asked for
+/// LocalDevVPN and dialed again in between.
+async fn reach_from(
     addr: SocketAddr,
+    first: std::result::Result<Found, Miss>,
     ports: impl IntoIterator<Item = u16>,
     knocks: &Knocks,
 ) -> Result<(SocketAddr, Found)> {
-    let missed = match probe(addr).await {
+    let missed = match first {
         Ok(found) => return Ok((addr, found)),
         Err(Miss::Unreachable(f)) => return Err(f),
         Err(Miss::Elsewhere(f)) => f,
@@ -240,6 +267,16 @@ async fn reach(
         }),
         Search::Stopped(f) => Err(f),
     }
+}
+
+/// `reach_from`, dialing `addr` first.
+#[cfg(test)]
+async fn reach(
+    addr: SocketAddr,
+    ports: impl IntoIterator<Item = u16>,
+    knocks: &Knocks,
+) -> Result<(SocketAddr, Found)> {
+    reach_from(addr, probe(addr).await, ports, knocks).await
 }
 
 /// `ports` without the one already tried and lockdownd's, in order.

@@ -1,7 +1,8 @@
-//! Step 5: fetch SideStore and sign it for this iPhone, as SideInstaller signs
-//! it (`Engine.performSign`): the device registered, then isideload's
-//! `sign_app` with an app group and without Increased Memory Limit, which
-//! SideStore, an app store that renews its own App ID, doesn't keep.
+//! Step 5: sign the SideStore step 1 got (download.rs) for this iPhone, as
+//! SideInstaller signs it (`Engine.performSign`): the device registered, then
+//! isideload's `sign_app` with an app group and without Increased Memory
+//! Limit, which SideStore, an app store that renews its own App ID, doesn't
+//! keep.
 //!
 //! isideload knows SideStore by its bundle ID and does for it what AltServer
 //! does: the app group goes into its Info.plist and its widget's
@@ -9,7 +10,7 @@
 //! (`ALTCertificate.p12`, named by `ALTCertificateID`), so SideStore can sign
 //! with the same certificate once you sign in to it.
 
-use std::io::{Read as _, Write as _};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use isideload::sideload::sideloader::MemoryLimit;
@@ -17,16 +18,7 @@ use isideload::sideload::sideloader::MemoryLimit;
 use crate::account::Session;
 use crate::fail::{Fail, Result};
 use crate::tunnel::DeviceInfo;
-use crate::{ui, Args, VERSION};
-
-/// SideStore's nightly, which SideInstaller's Nightly setting installs
-/// (`InstallSource.downloadURL`). On iOS 27 it's the build that can use this
-/// iPhone's pairing: an RPPairing record, which SideStore reads from its
-/// nightly of 20 September 2026 on. Its newest release, 0.7.0-alpha, is a
-/// build from 2024 that reads only a lockdown record, and iOS 27 makes none
-/// and lets no app use one through LocalDevVPN.
-pub const NIGHTLY_IPA: &str =
-    "https://github.com/SideStore/SideStore/releases/download/nightly/SideStore.ipa";
+use crate::ui;
 
 /// SideStore's bundle ID as published, before signing adds the team ID:
 /// the one isideload sets up as SideStore.
@@ -69,111 +61,6 @@ pub struct Signed {
     pub app_dir: PathBuf,
     pub bundle_id: String,
     pub name: String,
-}
-
-/// `--ipa` as a path, or the URL it names, or SideStore's nightly.
-pub async fn fetch_ipa(args: &Args) -> Result<PathBuf> {
-    match args.ipa.as_deref() {
-        Some(source) if !source.starts_with("https://") && !source.starts_with("http://") => {
-            let path = PathBuf::from(source);
-            check_ipa(&path)?;
-            ui::ok(&format!("using {}", path.display()));
-            Ok(path)
-        }
-        source => {
-            let url = source.unwrap_or(NIGHTLY_IPA);
-            let dir = args.home.join("downloads");
-            std::fs::create_dir_all(&dir).map_err(|e| {
-                Fail::new(format!("Couldn't create {}.", dir.display()), e.to_string())
-            })?;
-            download(url, &dir.join("SideStore.ipa")).await
-        }
-    }
-}
-
-async fn download(url: &str, dest: &Path) -> Result<PathBuf> {
-    ui::status("downloading SideStore");
-    ui::detail(url);
-    let client = reqwest::Client::builder()
-        .user_agent(format!("ssboot/{VERSION}"))
-        .build()
-        .map_err(|e| Fail::new("Couldn't start a download.", e.to_string()))?;
-    let mut response = client.get(url).send().await.map_err(|e| {
-        Fail::new(
-            "Couldn't download SideStore. Check the internet connection (LocalDevVPN only \
-             routes 10.7.0.1, so it isn't the cause).",
-            crate::error_text::error_text(&e),
-        )
-    })?;
-    if !response.status().is_success() {
-        return Err(Fail::new(
-            format!(
-                "GitHub answered {} for the SideStore download. Try again in a minute.",
-                response.status()
-            ),
-            url.to_string(),
-        ));
-    }
-    let total = response.content_length();
-    let partial = dest.with_extension("ipa.part");
-    let mut file = std::fs::File::create(&partial).map_err(|e| {
-        Fail::new(
-            format!("Couldn't write {}.", partial.display()),
-            e.to_string(),
-        )
-    })?;
-    let mut received: u64 = 0;
-    loop {
-        let chunk = response.chunk().await.map_err(|e| {
-            Fail::new(
-                "The SideStore download broke off. Run ssboot again.",
-                e.to_string(),
-            )
-        })?;
-        let Some(chunk) = chunk else { break };
-        file.write_all(&chunk).map_err(|e| {
-            Fail::new(
-                format!("Couldn't write {}.", partial.display()),
-                e.to_string(),
-            )
-        })?;
-        received += chunk.len() as u64;
-        if let Some(total) = total.filter(|t| *t > 0) {
-            ui::progress("downloaded", received, total);
-        }
-    }
-    ui::progress_end();
-    drop(file);
-    std::fs::rename(&partial, dest)
-        .map_err(|e| Fail::new(format!("Couldn't write {}.", dest.display()), e.to_string()))?;
-    check_ipa(dest)?;
-    ui::ok(&format!(
-        "downloaded SideStore ({:.1} MB)",
-        received as f64 / 1_048_576.0
-    ));
-    Ok(dest.to_path_buf())
-}
-
-/// An IPA is a zip: an error page or a truncated download isn't, and would
-/// only fail later, inside the signer.
-fn check_ipa(path: &Path) -> Result<()> {
-    let mut magic = [0u8; 4];
-    let read =
-        std::fs::File::open(path).and_then(|mut f| std::io::Read::read_exact(&mut f, &mut magic));
-    match read {
-        Ok(()) if &magic == b"PK\x03\x04" => Ok(()),
-        Ok(()) => Err(Fail::new(
-            format!(
-                "{} isn't an IPA. GitHub may have returned an error page: try again in a minute.",
-                path.display()
-            ),
-            format!("first bytes {magic:02x?}"),
-        )),
-        Err(e) => Err(Fail::new(
-            format!("Couldn't read {}.", path.display()),
-            e.to_string(),
-        )),
-    }
 }
 
 /// Reads the IPA's app before it's signed: that it's SideStore, since signing
@@ -335,6 +222,7 @@ fn bundle_info(app_dir: &Path) -> Result<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write as _;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("ssboot-{tag}-{}", std::process::id()));
@@ -371,21 +259,6 @@ mod tests {
         zip.write_all(binary).unwrap();
         zip.finish().unwrap();
         path
-    }
-
-    #[test]
-    fn only_a_zip_passes_as_an_ipa() {
-        let dir = temp_dir("ipa");
-        let good = dir.join("good.ipa");
-        std::fs::write(&good, b"PK\x03\x04rest").unwrap();
-        assert!(check_ipa(&good).is_ok());
-        let page = dir.join("page.ipa");
-        std::fs::write(&page, b"<!DOCTYPE html>").unwrap();
-        assert!(check_ipa(&page)
-            .unwrap_err()
-            .advice
-            .contains("isn't an IPA"));
-        assert!(check_ipa(&dir.join("missing.ipa")).is_err());
     }
 
     #[test]
