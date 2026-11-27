@@ -686,30 +686,6 @@ pub fn ask_secret(
     answer
 }
 
-/// A six-digit code, in boxes that fill as it's typed (the sixth digit sends
-/// it), while the running step shows `question`; `hint` goes under the boxes.
-pub fn ask_code(question: &str, label: &str, hint: &str, plain: &str) -> Option<String> {
-    let answer = if let Some(page) = web::page() {
-        match page.code(question, label, &[(false, hint)], false) {
-            web::Code::Digits(digits) => Some(digits),
-            web::Code::More | web::Code::Cancel => None,
-        }
-    } else if is_live() {
-        let saved = swap_status(question);
-        let asked = code(label, &[Hint::Plain(hint.to_string())], false);
-        swap_status(&saved);
-        match asked {
-            Asked::Answer(CodeAnswer::Code(digits)) => Some(digits),
-            Asked::Answer(_) => None,
-            Asked::NoKeys => ask(plain),
-        }
-    } else {
-        ask(plain)
-    };
-    record_answer(question, answer.as_ref().map(|_| "(a code)"));
-    answer
-}
-
 /// A line under the code boxes.
 #[derive(Clone)]
 pub enum Hint {
@@ -869,6 +845,30 @@ pub fn get_ready(title: &str, steps: &[&str], notes: &[&str], button: &str) -> b
     go
 }
 
+/// What to do outside Minis right now (in Control Center), while siboot
+/// waits to see it done and carries on by itself: on a card of its own on
+/// the page until `guide_gone`, printed in the terminal. Not a question:
+/// nothing is answered, and Stop or Ctrl-C ends the run as ever.
+pub fn show_guide(title: &str, steps: &[&str], notes: &[&str]) {
+    record(&format!("      {title}:"));
+    for (n, step) in steps.iter().enumerate() {
+        record(&format!("        {}. {step}", n + 1));
+    }
+    for note in notes {
+        record(&format!("        {note}"));
+    }
+    if web::page().is_some() {
+        web::send(json!({"t": "guide", "title": title, "steps": steps, "notes": notes}));
+    } else {
+        print_ready(title, steps, notes);
+    }
+}
+
+/// The card from `show_guide` is done with: the page takes it away.
+pub fn guide_gone() {
+    web::send(json!({"t": "guide_end"}));
+}
+
 fn print_ready(title: &str, steps: &[&str], notes: &[&str]) {
     let mut ui = ui();
     if ui.mode != Mode::Live {
@@ -956,8 +956,7 @@ pub fn spaced(code: &str) -> String {
     }
 }
 
-/// Digits three rows tall in heavy box-drawing lines, as siboot-pair shows
-/// its codes (rootshell/src/ui.rs).
+/// Digits three rows tall in heavy box-drawing lines.
 const DIGITS: [[&str; 3]; 10] = [
     ["┏━┓", "┃ ┃", "┗━┛"],
     ["╺┓ ", " ┃ ", "╺┻╸"],
@@ -2424,7 +2423,7 @@ mod tests {
         let lead = Line::new()
             .add(NONE, "  ⠋ ")
             .add(NONE, pad("Pairing", NAME_WIDTH));
-        let text = "rootshell is offering the pairing file it made";
+        let text = "Settings is offering the pairing file it made";
         let lines: Vec<String> = wrapped(lead.clone(), None, NONE, text, Some(" · 0:07"), 42, 2)
             .iter()
             .map(|l| l.render(42, false))
@@ -2432,7 +2431,7 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "  ⠋ Pairing   rootshell is offering the",
+                "  ⠋ Pairing   Settings is offering the",
                 "              pairing file it made · 0:07"
             ]
         );

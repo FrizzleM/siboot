@@ -15,44 +15,28 @@
 //! uses, and plays silence through Minis's player so iOS keeps Minis running
 //! while the user is in Settings (keepalive.rs).
 //!
-//! The pairing comes from, in order:
-//! 1. the file saved on an earlier run, while the iPhone accepts it;
-//! 2. the file siboot-pair offers from rootshell (../rootshell), for the
-//!    transfer code it shows: the route from before Minis could pair, still
-//!    taken when rootshell is offering;
-//! 3. a new pairing, here in Minis.
+//! The pairing comes from the file saved on an earlier run, while the iPhone
+//! accepts it, or else from a new pairing, here in Minis.
 //!
 //! Either way the iPhone has to accept the file before anything is signed.
 
 use std::future::Future;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use idevice::remote_pairing::{
     PairableHost, PairableHostInfo, PeerDevice, RpPairingFile, RpPairingSocket,
 };
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::timeout;
 
 use crate::bridge::{Advertisement, Bridge, BridgeError, PAIRABLE_HOST_TYPE};
 use crate::fail::{chain, Fail, Result};
 use crate::keepalive::{self, KeepAlive};
-use crate::{tunnel, ui, Args};
+use crate::{mobile, tunnel, ui, Args};
 
-/// Where siboot-pair offers the file (rootshell/src/main.rs, `HANDOFF_PORT`).
-const HANDOFF_PORT: u16 = 61207;
-/// Codes typed before siboot gives up. siboot-pair ends its offer after five.
-const CODE_TRIES: u32 = 3;
-/// Far larger than a pairing file, which is about 1 KB.
-const MAX_FILE: usize = 64 * 1024;
-/// How long siboot-pair may take to answer a code. It answers at once while
-/// rootshell runs, so silence means iOS has paused it.
-const ANSWER_WAIT: Duration = Duration::from_secs(20);
-
-/// "Pair with siboot" in Settings, as siboot-pair calls itself too.
+/// "Pair with siboot" in Settings.
 pub const HOST_NAME: &str = "siboot";
 /// What the iPhone reads off the host. iOS treats a pairable host as a
 /// computer, so the model stays a Mac's, as rust-core and StikPair send.
@@ -84,20 +68,14 @@ const MAX_ATTEMPTS: u32 = 3;
 /// carrying on regardless.
 const RETURN_WAIT: Duration = Duration::from_secs(10 * 60);
 
-/// What to do where this Minis can't pair: update it, or pair in rootshell.
-pub const UPDATE_OR_ROOTSHELL: &str = "Update Open Minis from the App Store (1.16 and later pair \
-     this iPhone themselves) and run siboot again. Or pair in rootshell (App Store): turn on its \
-     Settings › Location Diary Mode › Session Only, then run in its local shell, one line at a \
-     time: `curl -fsSLO https://raw.githubusercontent.com/FrizzleM/siboot/main/rootshell/bin/siboot-pair.wasm`, \
-     `ifconfig en0 > ifconfig.txt`, `./siboot-pair.wasm`. Once it has paired, leave it running \
-     and run siboot here again: it asks for the transfer code rootshell shows.";
+/// What to do where this Minis can't pair.
+pub const UPDATE_MINIS: &str = "Update Open Minis from the App Store (1.16 and later pair this \
+     iPhone themselves) and run siboot again.";
 
 /// Where the pairing that works came from.
 pub enum Source {
     /// The file saved on an earlier run.
     Saved,
-    /// siboot-pair's offer in rootshell.
-    Rootshell,
     /// A new pairing, made here.
     Minis,
 }
@@ -123,41 +101,14 @@ pub async fn ensure(args: &Args, path: &Path) -> Result<Source> {
     ui::activity("checking that Open Minis can pair this iPhone");
     let here = can_pair_here(&bridge).await;
 
-    let offer = SocketAddr::from(([127, 0, 0, 1], HANDOFF_PORT));
-    let hint = if here.is_ok() {
-        "type the transfer code it shows, or Cancel to pair here in Minis instead"
-    } else {
-        "type the transfer code it shows"
-    };
-    let ask = || {
-        ui::ask_code(
-            "rootshell is offering its file",
-            "Code",
-            hint,
-            "Transfer code shown in rootshell: ",
-        )
-    };
-    match take(offer, path, ask, ANSWER_WAIT).await? {
-        Taken::File => {
-            ui::activity("checking it with this iPhone");
-            tunnel::verify(args.device, path).await?;
-            ui::ok("this iPhone accepts the pairing file from rootshell");
-            return Ok(Source::Rootshell);
-        }
-        Taken::Cancelled if here.is_err() => {
-            return Err(Fail::by_user("Stopped at the transfer code."))
-        }
-        Taken::Cancelled | Taken::NotOffered => {}
-    }
-
     let notify = match here {
         Ok(notify) => notify,
         Err(why) => {
             let raw = match saved_refused {
                 Some(f) => format!("the saved pairing file was refused: {}", f.raw),
-                None => format!("nothing offering on {offer}, and no {}", path.display()),
+                None => format!("no {}", path.display()),
             };
-            return Err(Fail::new(format!("{why} {UPDATE_OR_ROOTSHELL}"), raw));
+            return Err(Fail::new(format!("{why} {UPDATE_MINIS}"), raw));
         }
     };
     ui::ok("Open Minis can pair this iPhone");
@@ -326,13 +277,19 @@ pub async fn run_host(
     // ready, and asked again after a refusal they can fix.
     let steps = ready_steps(&setup);
     let steps: Vec<&str> = steps.iter().map(String::as_str).collect();
-    let notes: &[&str] = if setup.keepalive_dir.is_some() { &[PLAYER_NOTE] } else { &[] };
+    let mut notes: Vec<&str> = Vec::new();
+    if setup.keepalive_dir.is_some() {
+        notes.push(PLAYER_NOTE);
+    }
+    if mobile::is_on() {
+        notes.push(AIRPLANE_NOTE);
+    }
     if setup.advertise {
         withdraw_leftovers(&setup.bridge).await;
     }
     let advert = loop {
         ui::status("start pairing when you're ready");
-        if !ui::get_ready(READY_TITLE, &steps, notes, "Start pairing") {
+        if !ui::get_ready(READY_TITLE, &steps, &notes, "Start pairing") {
             return Err(Fail::by_user("Stopped before pairing."));
         }
         if !setup.advertise {
@@ -410,12 +367,15 @@ pub async fn run_host(
                 ))
             }
             Err(_) => {
+                // In Mobile Data Mode Wi-Fi is off on purpose: whether Settings
+                // lists the entry in Airplane Mode is what the mode finds out.
+                let network = if mobile::is_on() { "" } else { "keep Wi-Fi on, " };
                 return Err(Fail::new(
                     format!(
                         "Nobody tapped Pair with {} within {}. If it never showed in Settings, \
-                         keep Wi-Fi on, check Open Minis has Local Network access (Settings › \
-                         Privacy & Security › Local Network), leave the player open, and run \
-                         siboot again.",
+                         {network}check Open Minis has Local Network access (Settings › Privacy \
+                         & Security › Local Network), leave the player open, and run siboot \
+                         again.",
                         setup.name,
                         spoken(setup.limits.device)
                     ),
@@ -518,6 +478,10 @@ pub async fn run_host(
 }
 
 const READY_TITLE: &str = "Pair this iPhone with siboot";
+/// In Mobile Data Mode the iPhone only answers siboot in Airplane Mode, and
+/// pairing ends with siboot checking the new pairing with it.
+const AIRPLANE_NOTE: &str = "Mobile Data Mode: leave Airplane Mode on while you pair. siboot says \
+     when to turn it off.";
 const PLAYER_NOTE: &str = "When you start, a player opens over Minis. It plays silence, which \
      keeps Minis running while you're in Settings: leave it open. siboot closes it once you're \
      back.";
@@ -637,7 +601,7 @@ fn fixable(e: &BridgeError) -> Option<&'static str> {
 fn advertise_failed(e: BridgeError) -> Fail {
     let advice = match e.code() {
         Some("not_declared") => {
-            format!("This Open Minis can't advertise a pairing host. {UPDATE_OR_ROOTSHELL}")
+            format!("This Open Minis can't advertise a pairing host. {UPDATE_MINIS}")
         }
         Some("renamed") => "Minis put Pair with siboot up under another name, which Settings \
                             won't pair with. Run siboot again."
@@ -760,131 +724,6 @@ fn parse_alt_irk(text: &str) -> Option<[u8; 16]> {
     bytes.try_into().ok()
 }
 
-// ---------------------------------------------------------------- rootshell
-
-/// What came of rootshell's offer.
-#[derive(Debug, PartialEq, Eq)]
-enum Taken {
-    /// The file, saved.
-    File,
-    /// Nothing is offering one.
-    NotOffered,
-    /// It was offering, and no code was typed.
-    Cancelled,
-}
-
-/// siboot-pair's answer to one code.
-enum Reply {
-    File(Vec<u8>),
-    WrongCode,
-    Unexpected(String),
-}
-
-/// Send one code on `stream` and read siboot-pair's answer: `NO`, or
-/// `OK <length>` and the file.
-async fn exchange(stream: &mut TcpStream, code: &str) -> std::io::Result<Reply> {
-    stream.write_all(format!("SIBOOT1 {code}\n").as_bytes()).await?;
-    let mut reader = BufReader::new(stream);
-    let mut answer = String::new();
-    if reader.read_line(&mut answer).await? == 0 {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "rootshell closed the connection without answering",
-        ));
-    }
-    let answer = answer.trim();
-    if answer == "NO" {
-        return Ok(Reply::WrongCode);
-    }
-    let Some(len) = answer.strip_prefix("OK ").and_then(|n| n.parse::<usize>().ok()) else {
-        return Ok(Reply::Unexpected(answer.to_string()));
-    };
-    if len == 0 || len > MAX_FILE {
-        return Ok(Reply::Unexpected(answer.to_string()));
-    }
-    let mut file = vec![0u8; len];
-    reader.read_exact(&mut file).await?;
-    Ok(Reply::File(file))
-}
-
-/// Take the pairing file siboot-pair is offering at `offer`, for the transfer
-/// code it shows, into `path`. The code proves the request comes from the
-/// person at the iPhone, not another app. Each answer may take up to `wait`.
-async fn take(
-    offer: SocketAddr,
-    path: &Path,
-    mut ask: impl FnMut() -> Option<String>,
-    wait: Duration,
-) -> Result<Taken> {
-    let connect = || timeout(Duration::from_secs(2), TcpStream::connect(offer));
-    let Ok(Ok(mut stream)) = connect().await else {
-        ui::detail(&format!("nothing is offering a pairing file on {offer}"));
-        return Ok(Taken::NotOffered);
-    };
-    ui::ok("rootshell is offering its file");
-    for attempt in 1..=CODE_TRIES {
-        let Some(typed) = ask() else {
-            return Ok(Taken::Cancelled);
-        };
-        let code: String = typed.chars().filter(char::is_ascii_digit).collect();
-        ui::activity("sending the code to rootshell");
-        // siboot-pair answers one request per connection.
-        if attempt > 1 {
-            stream = match connect().await {
-                Ok(Ok(s)) => s,
-                _ => {
-                    return Err(Fail::new(
-                        "rootshell stopped offering the pairing file. Run `./siboot-pair.wasm` in \
-                         rootshell again, then siboot here.",
-                        "",
-                    ))
-                }
-            };
-        }
-        let file = match timeout(wait, exchange(&mut stream, &code)).await {
-            Err(_) => {
-                return Err(Fail::new(
-                    "rootshell didn't answer: iOS has probably paused it. Check its Settings › \
-                     Location Diary Mode is on Session Only, open rootshell for a moment, then \
-                     come back here and run siboot again.",
-                    format!("no answer on {offer} within {} s", wait.as_secs()),
-                ))
-            }
-            Ok(Err(e)) => {
-                return Err(Fail::new(
-                    "The hand-over from rootshell broke off. Run siboot again.",
-                    e.to_string(),
-                ))
-            }
-            Ok(Ok(Reply::Unexpected(answer))) => {
-                return Err(Fail::new("rootshell sent something that isn't a pairing file.", answer))
-            }
-            Ok(Ok(Reply::WrongCode)) => {
-                let left = CODE_TRIES - attempt;
-                if left > 0 {
-                    ui::warn(&format!(
-                        "That isn't the code rootshell shows ({left} more {}).",
-                        if left == 1 { "try" } else { "tries" }
-                    ));
-                }
-                continue;
-            }
-            Ok(Ok(Reply::File(file))) => file,
-        };
-        // Checked before it replaces a file that may still work.
-        if let Err(e) = RpPairingFile::from_bytes(&file) {
-            return Err(Fail::new("rootshell sent something that isn't a pairing file.", e.to_string()));
-        }
-        save(path, &file)?;
-        ui::ok(&format!("took the pairing file from rootshell ({} bytes)", file.len()));
-        return Ok(Taken::File);
-    }
-    Err(Fail::new(
-        "The transfer code didn't match. Run siboot again and type the code rootshell shows.",
-        "",
-    ))
-}
-
 /// Write the pairing file, readable by this user only: it holds the private key.
 fn save(path: &Path, file: &[u8]) -> Result<()> {
     let failed = |e: std::io::Error| Fail::new(format!("Couldn't save the pairing file at {}.", path.display()), e.to_string());
@@ -904,8 +743,6 @@ fn save(path: &Path, file: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
     use crate::fake_iphone;
-
-    const QUICK: Duration = Duration::from_secs(5);
 
     const QUICK_LIMITS: Limits = Limits {
         device: Duration::from_secs(20),
@@ -1246,127 +1083,17 @@ mod tests {
         assert!(parse_alt_irk("zz112233445566778899aabbccddeeff").is_none());
     }
 
-    // ------------------------------------------------------------ rootshell
-
-    fn a_pairing_file() -> Vec<u8> {
-        RpPairingFile::generate("siboot test").to_bytes()
-    }
-
-    /// siboot-pair's side of the hand-off (rootshell/src/main.rs, `offer`):
-    /// one request per connection, `NO` for a wrong code.
-    async fn rootshell_offering(code: &'static str, file: Vec<u8>) -> SocketAddr {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            loop {
-                let (mut conn, _) = listener.accept().await.unwrap();
-                let mut asked = String::new();
-                BufReader::new(&mut conn).read_line(&mut asked).await.unwrap();
-                if asked.trim() == format!("SIBOOT1 {code}") {
-                    conn.write_all(format!("OK {}\n", file.len()).as_bytes()).await.unwrap();
-                    conn.write_all(&file).await.unwrap();
-                    return;
-                }
-                conn.write_all(b"NO\n").await.unwrap();
-            }
-        });
-        addr
-    }
-
-    fn typing(codes: &'static [&'static str]) -> impl FnMut() -> Option<String> {
-        let mut codes = codes.iter();
-        move || codes.next().map(|c| c.to_string())
-    }
-
-    #[tokio::test]
-    async fn the_file_comes_over_for_the_code_and_only_this_user_can_read_it() {
-        let home = temp_home("take");
+    #[test]
+    fn the_saved_pairing_file_only_this_user_can_read() {
+        let home = temp_home("save");
         let path = home.join("rp_pairing_file.plist");
-        let file = a_pairing_file();
-        let offer = rootshell_offering("481516", file.clone()).await;
-        assert_eq!(take(offer, &path, typing(&["481 516"]), QUICK).await.unwrap(), Taken::File);
+        let file = RpPairingFile::generate("siboot test").to_bytes();
+        save(&path, &file).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), file);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
         }
-    }
-
-    #[tokio::test]
-    async fn a_mistyped_code_gets_another_try() {
-        let home = temp_home("retry");
-        let path = home.join("rp_pairing_file.plist");
-        let offer = rootshell_offering("481516", a_pairing_file()).await;
-        let taken = take(offer, &path, typing(&["481517", "481516"]), QUICK).await.unwrap();
-        assert_eq!(taken, Taken::File);
-        assert!(path.exists());
-    }
-
-    #[tokio::test]
-    async fn three_wrong_codes_say_so_and_keep_the_old_file() {
-        let home = temp_home("wrong");
-        let path = home.join("rp_pairing_file.plist");
-        std::fs::write(&path, b"the old file").unwrap();
-        let offer = rootshell_offering("481516", a_pairing_file()).await;
-        let failure = take(offer, &path, typing(&["1", "2", "3"]), QUICK).await.err().unwrap();
-        assert!(failure.advice.contains("didn't match"), "{}", failure.advice);
-        assert_eq!(std::fs::read(&path).unwrap(), b"the old file");
-    }
-
-    #[tokio::test]
-    async fn something_that_isnt_a_pairing_file_is_refused() {
-        let home = temp_home("junk");
-        let path = home.join("rp_pairing_file.plist");
-        let offer = rootshell_offering("481516", b"not a plist".to_vec()).await;
-        let failure = take(offer, &path, typing(&["481516"]), QUICK).await.err().unwrap();
-        assert!(failure.advice.contains("isn't a pairing file"), "{}", failure.advice);
-        assert!(!path.exists());
-    }
-
-    /// What siboot met on the iPhone with rootshell in the background: the
-    /// connection goes through, and then nothing answers.
-    #[tokio::test]
-    async fn a_rootshell_that_never_answers_is_given_up_on() {
-        let home = temp_home("silent");
-        let path = home.join("rp_pairing_file.plist");
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let offer = listener.local_addr().unwrap();
-        let held = tokio::spawn(async move {
-            let (conn, _) = listener.accept().await.unwrap();
-            tokio::time::sleep(Duration::from_secs(30)).await;
-            drop(conn);
-        });
-        let started = std::time::Instant::now();
-        let failure = take(offer, &path, typing(&["481516"]), Duration::from_millis(300))
-            .await
-            .err()
-            .expect("a silent rootshell should end the wait");
-        assert!(started.elapsed() < Duration::from_secs(5));
-        assert!(failure.advice.contains("didn't answer"), "{}", failure.advice);
-        assert!(!path.exists());
-        held.abort();
-    }
-
-    #[tokio::test]
-    async fn nothing_offering_means_nothing_taken() {
-        let home = temp_home("none");
-        let path = home.join("rp_pairing_file.plist");
-        let closed = {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            listener.local_addr().unwrap()
-        };
-        assert_eq!(take(closed, &path, typing(&[]), QUICK).await.unwrap(), Taken::NotOffered);
-        assert!(!path.exists());
-    }
-
-    /// Cancel at rootshell's code: in Minis 1.16 that goes on to pairing here.
-    #[tokio::test]
-    async fn no_code_typed_is_a_cancel_not_a_failure() {
-        let home = temp_home("cancel");
-        let path = home.join("rp_pairing_file.plist");
-        let offer = rootshell_offering("481516", a_pairing_file()).await;
-        assert_eq!(take(offer, &path, typing(&[]), QUICK).await.unwrap(), Taken::Cancelled);
-        assert!(!path.exists());
     }
 }

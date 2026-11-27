@@ -29,7 +29,7 @@ use tokio::time::timeout;
 use crate::bridge::{Bridge, BridgeError};
 use crate::download::{self, Ipa};
 use crate::fail::{chain, Fail, Result};
-use crate::{ui, Args, Command};
+use crate::{mobile, ui, Args, Command};
 
 /// Open Minis in the App Store app, for the page's button. The page hands
 /// links that aren't http to iOS, so this opens the App Store itself.
@@ -92,12 +92,32 @@ pub async fn run(args: &Args) -> Result<Checked> {
             first = probe(args.device).await;
         }
     }
-    let (device, found) = reach_from(args.device, first, DYNAMIC_PORTS, &KNOCKS)
-        .await
-        .map_err(|f| match &ipa {
-            Some(ipa) if installs && ipa.github => with_kept_note(f, ipa),
-            _ => f,
-        })?;
+    let (device, found) = match reach_from(args.device, first, DYNAMIC_PORTS, &KNOCKS).await {
+        Ok(reached) => reached,
+        // Refused on every port while the internet works: what an iPhone on
+        // mobile data without Wi-Fi does, so Mobile Data Mode is offered
+        // (mobile.rs). `check` only says so.
+        Err(f) if f.refused
+            && args.command != Command::Check
+            && ui::interactive()
+            && (online || mobile::online().await) =>
+        {
+            if !mobile::offer(args.device) {
+                return Err(mobile::declined(f));
+            }
+            mobile::airplane_on(args.device, mobile::On::First).await?;
+            ui::activity(&format!("reaching this iPhone at {}", args.device));
+            reach_from(args.device, probe(args.device).await, DYNAMIC_PORTS, &KNOCKS)
+                .await
+                .map_err(mobile::not_mobile_data)?
+        }
+        Err(f) => {
+            return Err(match &ipa {
+                Some(ipa) if installs && ipa.github => with_kept_note(f, ipa),
+                _ => f,
+            })
+        }
+    };
     ui::ok(&format!(
         "this iPhone answers on {device} (RPPairing, wire protocol {})",
         found.wire_version
@@ -114,7 +134,8 @@ pub async fn run(args: &Args) -> Result<Checked> {
                 ui::warn("Minis's notifications are off, so the pairing code will show only in Minis.");
             }
             Err(why) => ui::warn(&format!(
-                "{why} The pairing then has to come from a file saved before, or from rootshell."
+                "{why} The pairing then has to come from a file saved before: {}",
+                crate::pairing::UPDATE_MINIS
             )),
         }
     }
@@ -313,23 +334,25 @@ async fn probe(addr: SocketAddr) -> std::result::Result<Found, Miss> {
     let stream = match timeout(Duration::from_secs(8), TcpStream::connect(addr)).await {
         Ok(Ok(s)) => s,
         Ok(Err(e)) if e.kind() == ErrorKind::ConnectionRefused => {
-            return Err(Miss::Elsewhere(Fail::new(
-                format!(
-                    "The iPhone refused the connection at {addr}, and no other port on it answers \
-                     as its pairing service. Turn on Developer Mode (Settings › Privacy & \
-                     Security › Developer Mode), and check Wi-Fi is on. If both are on, restart \
-                     the iPhone, connect LocalDevVPN again and run siboot again."
-                ),
-                format!("{e} ({:?})", e.kind()),
-            )))
+            return Err(Miss::Elsewhere(Fail {
+                refused: true,
+                ..Fail::new(
+                    format!(
+                        "The iPhone refused the connection at {addr}, and no other port on it \
+                         answers as its pairing service. On mobile data without Wi-Fi, iOS \
+                         refuses every port: `siboot` then offers Mobile Data Mode (beta). \
+                         Otherwise turn on Developer Mode (Settings › Privacy & Security › \
+                         Developer Mode), and if it's on, restart the iPhone, connect LocalDevVPN \
+                         again and run siboot again."
+                    ),
+                    format!("{e} ({:?})", e.kind()),
+                )
+            }))
         }
         Ok(Err(e)) => return Err(Miss::Unreachable(unreachable(addr, &e))),
         Err(_) => {
             return Err(Miss::Unreachable(Fail::new(
-                format!(
-                    "Nothing answered at {addr}. Connect LocalDevVPN (it shows Connected), and \
-                     check Wi-Fi is on."
-                ),
+                format!("Nothing answered at {addr}. Connect LocalDevVPN (it shows Connected)."),
                 "connect timed out after 8 s",
             )))
         }
@@ -537,7 +560,7 @@ fn unreachable(addr: SocketAddr, e: &std::io::Error) -> Fail {
             "iOS won't let Minis reach {addr}. Connect LocalDevVPN (it shows Connected) and use \
              its address, 10.7.0.1."
         ),
-        _ => format!("Couldn't reach {addr}. Connect LocalDevVPN, and check Wi-Fi is on."),
+        _ => format!("Couldn't reach {addr}. Connect LocalDevVPN (it shows Connected)."),
     };
     Fail::new(advice, format!("{e} ({:?})", e.kind()))
 }

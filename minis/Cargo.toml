@@ -1,6 +1,6 @@
 [package]
 name = "siboot"
-version = "0.21.0"
+version = "0.22.0"
 edition = "2021"
 description = "PC-free bootstrap that pairs and installs SideInstaller onto the iPhone it runs on, from Open Minis's Linux shell"
 license = "MIT"
@@ -61,7 +61,7 @@ tokio = { version = "1", features = [
 plist = "1.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# A random host identifier for a new pairing, as siboot-pair makes one.
+# A random host identifier for a new pairing.
 uuid = { version = "1", features = ["v4"] }
 # Downloading the SideInstaller release. Same line isideload uses, so it adds
 # nothing to the tree.

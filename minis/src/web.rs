@@ -1163,7 +1163,7 @@ mod tests {
 
         // Without other ways on offer, asking for them asks again.
         let code = asked(server, |s| {
-            s.code("rootshell is offering its file", "Code", &[], false)
+            s.code("enter the code Apple sent", "Code", &[], false)
         });
         let question = until(&mut reader, "ask");
         reply(

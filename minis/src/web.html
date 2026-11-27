@@ -123,6 +123,10 @@ body:not(.details) .step[data-state=done] .item.ok{display:none}
 .ready-step::before{counter-increment:ready; content:counter(ready); flex:none; display:grid; place-items:center; width:22px; height:22px; margin-top:-1px; border-radius:50%; background:var(--control-hover); color:var(--text-2); font-size:13px; font-weight:600}
 .ready-notes{margin-top:10px}
 .ready-note{padding:2px 0 2px 32px; font-size:14px; color:var(--text-2)}
+/* No numbered steps above them (Mobile Data Mode's offer): no indent to line up with. */
+.ready-steps:empty{display:none}
+.ready-steps:empty + .ready-notes{margin-top:12px}
+.ready-steps:empty + .ready-notes .ready-note{padding-left:0; font-size:15px; color:var(--text)}
 
 /* ---------- the pairing code, while Settings waits for it ---------- */
 
@@ -132,6 +136,8 @@ body:not(.details) .step[data-state=done] .item.ok{display:none}
 .pin-digit{display:grid; place-items:center; width:42px; height:56px; border-radius:var(--r-control); background:var(--raised); box-shadow:inset 0 0 0 1px var(--hairline-strong); font:600 28px/1 var(--mono); font-variant-numeric:tabular-nums}
 .pin-digit:nth-child(4){margin-left:10px}
 .pin-note{margin-top:12px; font-size:15px; color:var(--text-2)}
+/* What to do in Control Center (Mobile Data Mode), until siboot sees it done. */
+.guide .ready-steps{margin-top:10px}
 
 /* ---------- how it ended ---------- */
 
@@ -210,7 +216,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
   // siboot writes its lines in lower case to go after a name; a line on its
   // own starts with a capital, but names stay as they're spelled: the apps',
   // and a host or a file (new.ani.sidestore.io, siboot.log).
-  const cap = (s) => (/^(rootshell|siboot|iOS)\b|^[^\s.]+\.[^\s.]/.test(s) ? s : s.charAt(0).toUpperCase() + s.slice(1));
+  const cap = (s) => (/^(siboot|iOS)\b|^[^\s.]+\.[^\s.]/.test(s) ? s : s.charAt(0).toUpperCase() + s.slice(1));
   const mb = (bytes) => (bytes / 1048576).toFixed(1);
 
   function heardAt(at) {
@@ -358,6 +364,34 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     pinEl = null;
   }
 
+  // What to do elsewhere right now (Airplane Mode in Control Center), on a
+  // card under the running step until "guide_end": siboot sees it done and
+  // carries on by itself, so nothing is sent back.
+  let guideEl = null;
+  function guide(e) {
+    guideEnd();
+    guideEl = make("section", "pin guide");
+    guideEl.setAttribute("role", "status");
+    guideEl.append(make("h2", "pin-title", e.title || ""));
+    const list = make("ol", "ready-steps");
+    for (const step of e.steps || []) list.append(make("li", "ready-step", step));
+    guideEl.append(list);
+    if ((e.notes || []).length) {
+      const notes = make("ul", "ready-notes");
+      for (const note of e.notes) notes.append(make("li", "ready-note", note));
+      guideEl.append(notes);
+    }
+    const s = steps[active];
+    if (s) s.items.after(guideEl);
+    else afterEl.after(guideEl);
+    guideEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  function guideEnd() {
+    if (guideEl) guideEl.remove();
+    guideEl = null;
+  }
+
   // ---------------------------------------------------------- how it ended
 
   function outcome(tone, title, took, paragraphs, cause) {
@@ -394,6 +428,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     // it asks after (the log) comes as a new one.
     if (asking) answered(asking.id);
     pinEnd();
+    guideEnd();
     if (active >= 0) settle("failed", "stopped after " + clock(now() - steps[active].startedAt));
     outcome("bad", "✕ Stopped", e.took || "", [e.advice], e.cause || "");
   }
@@ -402,6 +437,7 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
     ended = true;
     if (asking) answered(asking.id);
     pinEnd();
+    guideEnd();
     stopEl.hidden = true;
     if (source) source.close();
     banner("siboot is done. You can close this page.", "", "done");
@@ -589,6 +625,8 @@ footer{display:flex; align-items:center; justify-content:space-between; gap:12px
       case "ask": ask(e); break;
       case "pin": pin(e); break;
       case "pin_end": pinEnd(); break;
+      case "guide": guide(e); break;
+      case "guide_end": guideEnd(); break;
       case "answered": answered(e.id); break;
       case "end": end(); break;
     }

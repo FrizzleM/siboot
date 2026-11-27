@@ -8,8 +8,9 @@ Open Minis 1.16 (App Store, 2026-11-14) siboot pairs the iPhone with itself too
 
 ## Running it
 
-Needs iOS 27 or later, Developer Mode on, Wi-Fi, LocalDevVPN (App Store)
-connected, and Open Minis 1.16 or later. Then, in Open Minis's terminal:
+Needs iOS 27 or later, Developer Mode on, LocalDevVPN (App Store) connected,
+Open Minis 1.16 or later, and Wi-Fi, or mobile data with Mobile Data Mode
+(beta, [below](#on-mobile-data)). Then, in Open Minis's terminal:
 
 ```sh
 wget -qO- https://raw.githubusercontent.com/FrizzleM/siboot/main/minis/install.sh | sh
@@ -38,9 +39,7 @@ last a year.
 
 In Open Minis 1.15 or older siboot stops at once and says to update Minis from
 the App Store (the page has a button for it). Minis doesn't tell the shell its
-version, so siboot goes by `minis-bonjour`, which came with 1.16. siboot still
-takes rootshell's file ([`../rootshell`](../rootshell#running-it)) whenever
-siboot-pair is offering one, for the transfer code it shows.
+version, so siboot goes by `minis-bonjour`, which came with 1.16.
 
 To answer in the terminal instead, add `-s -- --terminal` after `sh` (or run
 `siboot --terminal` once it's installed).
@@ -104,7 +103,7 @@ too short for it and a blank line above it, it makes way for the run's own
 lines. Plain output has it after the version.
 
 Questions are asked in place, and read keys as they're typed: the email in a
-field, the password as dots, the transfer and verification codes in boxes that
+field, the password as dots, the verification code in boxes that
 send themselves at the sixth digit, yes or no on `y` or `n` (or the arrows and
 return), and menus picked with the arrows or a digit. At the verification code,
 a letter shows the other ways to get one (a text, a call, the devices, again).
@@ -190,8 +189,8 @@ file is.
 
 | # | Step | How |
 |---|---|---|
-| 1 | Check | Apple's sign-in server answers; SideInstaller's latest release is downloaded, or the copy kept from an earlier run when that's the latest or GitHub doesn't answer ([above](#where-github-is-blocked)); the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN, or on the port its pairing service has instead ([below](#the-pairing-port)), and when nothing answers, siboot asks for LocalDevVPN and dials again |
-| 2 | Pairing | the file saved in `~/.siboot` on an earlier run, while the iPhone accepts it; else the one siboot-pair offers on `127.0.0.1:61207`, for its transfer code (20 s for each answer), when it's offering; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
+| 1 | Check | Apple's sign-in server answers; SideInstaller's latest release is downloaded, or the copy kept from an earlier run when that's the latest or GitHub doesn't answer ([above](#where-github-is-blocked)); the iPhone answers RPPairing on `10.7.0.1:49152` through LocalDevVPN, or on the port its pairing service has instead ([below](#the-pairing-port)), and when nothing answers, siboot asks for LocalDevVPN and dials again; when every port refuses while Apple answers, siboot offers Mobile Data Mode ([below](#on-mobile-data)) |
+| 2 | Pairing | the file saved in `~/.siboot` on an earlier run, while the iPhone accepts it; else a new pairing, made here ([below](#pairing-in-minis)); then pair-verified with the iPhone |
 | 3 | Connect | pair-verify → `createListener` → TLS-PSK → CDTunnel → software TCP → RSD, as `tunnel_create_rppairing_multihost` does; lockdownd gives the UDID |
 | 4 | Apple ID | the Apple Account picked from those saved, or typed, and its saved token before any password ([below](#saved-apple-accounts)); then rust-core's `apple_session.rs`, compiled unchanged: saved token first, then GrandSlam + 2FA, Mac-ADI anisette servers in SideInstaller's Auto order; then the team, picked when Apple lists more than one ([below](#more-than-one-team)) |
 | 5 | Sign | the `SideInstaller.ipa` from step 1, signed with isideload's `sign_app` (device registered, app group, no Increased Memory Limit), as Side by Side does |
@@ -235,6 +234,44 @@ Minis keeps running out of connections.
 Minis's shell can't browse Bonjour itself. `minis-bonjour browse` and
 `resolve` might give the advertised port, but whether `resolve` reaches the
 iPhone's own service hasn't been tried, so siboot doesn't count on it.
+
+## On mobile data
+
+On mobile data without Wi-Fi, iOS keeps the iPhone's pairing service closed:
+every connection LocalDevVPN carries to 10.7.0.1 is refused, on every port. In
+Airplane Mode, with LocalDevVPN still connected, the service is open again,
+and a tunnel opened then keeps working once mobile data is back. SideInstaller
+measured both on an iPhone 16 with iOS 27.2.1 on 2026-11-26, and has a Mobile
+Data Mode built on them; siboot has the same since 0.22.0, as a beta
+([`src/mobile.rs`](src/mobile.rs)).
+
+Open Minis's shell can't tell which network the iPhone is on: its netlink
+answers with an empty list, so there are no interfaces to read. siboot goes by
+what it can see instead. When step 1 finds every port refusing while Apple's
+sign-in server answers, it offers **Mobile Data Mode (beta)**, and says that
+Wi-Fi is the stable way, and the safer one. With a yes:
+
+- A card asks for Airplane Mode (from Control Center, LocalDevVPN left
+  connected), and siboot carries on by itself once the iPhone takes a
+  connection. When the internet goes and the iPhone still refuses, siboot looks
+  on its other ports once more, then says mobile data isn't what stops it.
+- Pairing in Minis (step 2) and the tunnel (step 3) happen in Airplane Mode.
+  The pairing card says to leave it on. Whether Settings lists Pair with
+  siboot in Airplane Mode hasn't been seen on an iPhone yet.
+- Before signing in (step 4), a card asks for Airplane Mode off, and siboot
+  carries on once Apple's server answers. The tunnel from step 3 stays open
+  meanwhile.
+- Step 6 installs through that tunnel while it still answers (lockdownd gives
+  the iOS version within 8 s). When it has closed, siboot asks for Airplane
+  Mode again and opens a new one.
+- Any later dial the iPhone refuses asks for Airplane Mode again instead of
+  stopping, and at the end siboot says to turn Airplane Mode off if it's still
+  on. The run's log counts how often it asked, and whether the kept tunnel
+  still answered.
+
+`siboot connect` and `siboot developer-mode` use it the same way, with no
+internet step. `siboot check` doesn't offer it, and plain output without the
+page can't ask, so both stop with advice that says what `siboot` offers.
 
 ## More than one team
 
@@ -428,11 +465,8 @@ host identity, the advertisement's name and TXT keys and its withdrawal, a
 leftover one withdrawn first, Local Network refused once and asked again, a
 Minis that can't advertise or has no `minis-bonjour`, the silence playing until
 Minis is in front again, its player closed and opened again, a mistyped code,
-three, a connection dropped before the code, nobody tapping), the hand-off from rootshell
-against a stand-in for siboot-pair's side (the right code, a mistyped one, three
-wrong ones, something that isn't a pairing file, nothing offered, no code
-typed), argument
-parsing, `developer-mode` against stand-ins for lockdownd and AMFI (on already,
+three, a connection dropped before the code, nobody tapping), the pairing file
+saved readable by this user only, argument parsing, `developer-mode` against stand-ins for lockdownd and AMFI (on already,
 off, unreadable, a declined restart, the passcode refusal, a hang-up), the bundle walk, 2FA answers, server order, the sign-in errors that
 stop it, which teams in a listTeams answer are free or paid and how the
 question lists them, the saved Apple Accounts (the order, at most seven,
@@ -444,42 +478,32 @@ SideInstaller's download against a stand-in for GitHub (the latest release
 downloaded once and kept, a newer one replacing it, GitHub blocked with a kept
 copy and with none, a download refused, cut off or answered with a page while
 an older copy is kept, a captive portal's redirect, `check` downloading
-nothing, `--ipa` as a path and as a URL), install refusals, and rust-core's own `apple_session.rs` and
-`error_text.rs` tests. A test also stands in for a rootshell that iOS has
-paused: the connection goes through and nothing answers. The page's server is
+nothing, `--ipa` as a path and as a URL), install refusals, Mobile Data Mode's
+waits over real loopback ports (Airplane Mode seen on when the port takes the
+connection, or when the internet goes while it still refuses, both waits
+running out, the internet waited for only in the mode, declining), and
+rust-core's own `apple_session.rs` and
+`error_text.rs` tests. The page's server is
 tested over real loopback connections: paths without the key, another Host,
 POSTs that aren't JSON or come from another origin, oversized requests, events
 replayed and resumed after a reconnect, one progress event a percent, every
 kind of question (an answer for another question refused, an empty one or a
 code that isn't six digits asked again, cancelling, getting ready), Stop, and
-closing. siboot-pair's own tests, with the same fake iPhone, are in
-[`../rootshell`](../rootshell#tests).
+closing.
 
 `cargo run --example screens` plays pairing in Minis as the page and the live
-screen show it (`-- rootshell` plays rootshell's hand-off instead,
-`-- teams` asks which of two teams signs, `-- saved` offers two saved Apple
+screen show it (`-- teams` asks which of two teams signs, `-- saved` offers two saved Apple
 Accounts, `-- saved run-out` one whose saved sign-in has run out,
 `-- moved` and `-- nowhere` look for a pairing service that isn't on 49152,
+`-- mobile` finds every port refusing and plays Mobile Data Mode,
 `-- vpn` downloads SideInstaller over another VPN and then asks for
 LocalDevVPN, and `-- blocked` installs the SideInstaller an earlier run kept).
 
 ## What's been tested
 
-- **On an iPhone (iOS 27, November 2026):** this route end to end. siboot
-  0.12.0 in Open Minis's App Store build took the pairing from siboot-pair 0.1.0
-  in rootshell and installed SideInstaller.
-- **0.13.0** is 0.12.0 without what that route doesn't use: pairing inside
-  Minis (through `minis-bonjour`, which only Minis's TestFlight builds have),
-  its silent-audio keep-alive and notifications, and the Files › Minis › shared
-  import. Steps 3–7 are unchanged. Tested on macOS and Alpine aarch64 (29 tests;
-  `install.sh` installed it, skipped a current copy and refused a tampered one).
-  On the iPhone it got stuck with rootshell offering: it took rootshell's offer
-  before the saved file, and rootshell showed no request.
-- **0.13.1** goes back to 0.12.0's order, the saved file first, and stops
-  waiting for rootshell's answer after 20 s. Tested the same way; not yet run on
-  an iPhone. The hand-off itself (two apps on one iPhone's loopback) hasn't
-  completed on an iPhone yet: the runs that worked there used a file moved over
-  the LAN or saved by an earlier run.
+- **Before 0.18.0** (0.12 to 0.17), while the App Store's Open Minis couldn't
+  advertise a pairing host, siboot took its pairing from a file made outside
+  Minis. 0.22.0 removed what was left of that; see the git history.
 - **0.14.0** adds `siboot developer-mode`; the install is unchanged. Tested on
   macOS and Alpine aarch64 (39 tests, the new ones against stand-ins for
   lockdownd and AMFI; `install.sh | sh -s developer-mode` ran it). Not run on
@@ -489,8 +513,7 @@ LocalDevVPN, and `-- blocked` installs the SideInstaller an earlier run kept).
 
 - **0.15.0** is 0.14.0 with the live screen above and `--plain`; what each step
   does is unchanged. Tested on macOS and Alpine aarch64 (51 tests), and through
-  `examples/screens.rs` in a 46-column terminal: an install with a mistyped
-  transfer code and the menu of other ways to get Apple's code, a stop, Developer
+  `examples/screens.rs` in a 46-column terminal: an install, the menu of other ways to get Apple's code, a stop, Developer
   Mode's yes or no, and `--plain`; `install.sh`'s bar in Alpine. Not run on an
   iPhone yet, so not in Minis's own terminal.
 
@@ -518,7 +541,7 @@ LocalDevVPN, and `-- blocked` installs the SideInstaller an earlier run kept).
 - **0.17.0** shows the run as the page above by default; the steps are
   unchanged, and `--terminal` gives the terminal as before. Tested on macOS
   (71 tests), and through `examples/screens.rs -- --web` in a
-  browser at an iPhone's size: an install with a mistyped transfer code, Other
+  browser at an iPhone's size: an install, Other
   ways for Apple's code and a mistyped one; a stop at Connect and the question
   about the log; Developer Mode's question and the page's Stop; a page reloaded
   mid-run; and the run paused with SIGSTOP, where the page said siboot wasn't
@@ -530,19 +553,17 @@ LocalDevVPN, and `-- blocked` installs the SideInstaller an earlier run kept).
   `minis-bonjour`, is on the App Store: 0.11 and 0.12 paired that way with
   Minis's TestFlight build, and SideInstaller installed after it on an iPhone 16
   on iOS 27 (2026-11-10). The pairing code is 0.12's, on today's page and live
-  screen; rootshell's hand-off stays for an older Minis, and is still taken
-  first whenever siboot-pair is offering. Tested on macOS and Alpine aarch64
+  screen. Tested on macOS and Alpine aarch64
   (96 tests, the stand-ins for Minis's commands under busybox `sh` too), and
   through `examples/screens.rs` as the page at an iPhone's size, on a
   45-column live screen and as plain lines; the static build runs `--help`
   and `check` in Alpine. A test build, installed from the `minis-pairing`
   branch, worked on an iPhone with Open Minis 1.16 from the App Store
-  (2026-11-14): it paired in Minis, with no rootshell.
+  (2026-11-14): it paired in Minis, with no other app.
 - **0.18.1** stops in an Open Minis older than 1.16 before anything else, with
   its own message (update Open Minis in the App Store) and, on the page, an
   Update Open Minis button that opens the App Store. Before, an older Minis
-  went on to step 2 and stopped there, pointing at rootshell, unless a saved
-  pairing still worked. No log is offered after it.
+  went on to step 2 and stopped there unless a saved pairing still worked. No log is offered after it.
 - **0.19.0** asks which developer team signs when Apple lists more than one,
   each marked free or paid ([above](#more-than-one-team)); with one team
   nothing changes. Tested on macOS and Alpine aarch64 (102 tests, the new
@@ -608,6 +629,38 @@ LocalDevVPN, and `-- blocked` installs the SideInstaller an earlier run kept).
   next, and with raw.githubusercontent.com blocked it installed 0.20.1 from
   fastly.jsdelivr.net. Not run on an iPhone, nor from inside a country that
   blocks GitHub.
+- **0.21.1** signs in as a current Mac again. 0.20.1 got past Apple's HTTP
+  503s by reporting a Mac on macOS 10.15.7, taken for the newest that still
+  says `Mac OS X`, but Apple's own Macs say `Mac OS X` on every version. With
+  an old Mac, iLoader's and SideStore's users got a code by text message that
+  Apple then wouldn't send, or -22410 or -23782; with a current Mac spelled
+  `Mac OS X`, the code came on their trusted devices (iLoader #1203, #1205,
+  #1304; SideStore #1745). siboot now reports the Mac it reported until
+  0.20.0 with that spelling, `<MacBookPro18,3> <Mac OS X;26.6;25F84>`
+  (SideInstaller 9e8d7c1's isideload, through the submodule). Apple answers
+  -22410 to an anisette identity made as another client, so the first sign-in
+  with the password after updating makes a new identity, and Apple may ask for
+  a verification code once more. A token saved by an earlier run is still
+  tried first, with the identity it was issued to. Tested on macOS (133 tests)
+  and through rust-core's `apple_session` with a made-up account and an empty
+  store: through lillq and new.ani.sidestore.io it reported that Mac,
+  provisioned an identity as it, and got Apple's -20970, no 503. The static
+  build ran `--version` in Alpine. Not signed in with a real account yet.
+  Never published on its own: it went out with 0.22.0.
+- **0.22.0** adds Mobile Data Mode (beta, [above](#on-mobile-data)) and moves
+  the submodule to SideInstaller 58c5ea5, for one RSD handshake UUID per host
+  (from iOS 27.2 a tunnel handshake with another UUID makes the iPhone close
+  every tunnel's services) and jktcp 0.1.8; the tunnel's segments are capped at
+  8192 bytes, as idevice caps them. Without Wi-Fi, nothing says Wi-Fi is
+  needed any more. It also drops the leftovers of the pre-1.16 route (the
+  rootshell/ folder, the transfer-code hand-off and the messages pointing at
+  it): siboot runs in Open Minis alone, with LocalDevVPN. Tested on macOS (135 tests,
+  8 of them for the mode: Airplane Mode seen on when the iPhone takes the
+  connection, or when the internet goes while it still refuses, both waits
+  ending, the internet waited for only in the mode, declining, the advice when
+  a dial fails) and through the
+  screens example's `-- mobile` run on the page. Not run on an iPhone yet, on
+  mobile data or otherwise.
 
 Not tested yet: other iPhones and iOS versions, an Apple Account on more than
 one team, one at its certificate or App ID limit (siboot then asks which

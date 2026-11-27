@@ -15,6 +15,9 @@ pub struct Fail {
     /// The cause is known and so is the fix (an Open Minis that's too old),
     /// so there's no log to offer either.
     pub known: bool,
+    /// The iPhone refused the connection, as it does on every port while it's
+    /// on mobile data without Wi-Fi (mobile.rs).
+    pub refused: bool,
 }
 
 impl Fail {
@@ -24,6 +27,7 @@ impl Fail {
             raw: raw.into(),
             by_user: false,
             known: false,
+            refused: false,
         }
     }
 
